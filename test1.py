@@ -1,282 +1,603 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ASPX to Thymeleaf HTML Converter
-将ASPX文件转换为Thymeleaf HTML格式
+专业ASPX到Thymeleaf转换器
+支持各种ASP.NET控件到Thymeleaf的智能转换
 """
 
 import re
 import os
 import sys
 from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
-def convert_aspx_to_thymeleaf(input_file, output_file=None):
-    """
-    将ASPX文件转换为Thymeleaf HTML
+class ASPXToThymeleafConverter:
+    """ASPX到Thymeleaf转换器主类"""
     
-    Args:
-        input_file: 输入的ASPX文件路径
-        output_file: 输出的HTML文件路径（如果为None，则自动生成）
-    
-    Returns:
-        bool: 转换是否成功
-    """
-    
-    # 检查输入文件是否存在
-    if not os.path.exists(input_file):
-        print(f"错误：文件不存在 - {input_file}")
-        return False
-    
-    # 读取输入文件（shift-jis编码）
-    try:
-        with open(input_file, 'r', encoding='shift-jis') as f:
-            content = f.read()
-        print(f"成功读取文件（shift-jis编码）: {input_file}")
-    except UnicodeDecodeError:
-        try:
-            # 尝试使用utf-8作为备选
-            with open(input_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-            print(f"成功读取文件（utf-8编码）: {input_file}")
-        except Exception as e:
-            print(f"错误：无法读取文件 - {e}")
-            return False
-    
-    original_content = content
-    
-    # 执行转换
-    converted_lines = []
-    lines = content.splitlines()
-    
-    # 标记是否需要转换body
-    body_has_fragment = False
-    
-    for line_num, line in enumerate(lines, 1):
-        converted_line = line
+    def __init__(self):
+        self.conversion_log = []
+        self.warning_count = 0
+        self.success_count = 0
         
-        # 1. 转换按钮：<asp:Button> 到 <md-outlined-button>
-        # 匹配自闭合的asp:Button
-        button_pattern_self_closed = r'<asp:Button\s+([^>]*?)\s*/>'
-        # 匹配非自闭合的asp:Button
-        button_pattern_closed = r'<asp:Button\s+([^>]*?)>(.*?)</asp:Button>'
+    def log(self, message: str, level: str = "INFO"):
+        """记录日志"""
+        log_entry = f"[{level}] {message}"
+        self.conversion_log.append(log_entry)
+        print(log_entry)
+    
+    def extract_attributes(self, tag_content: str) -> Dict[str, str]:
+        """提取HTML/ASPX标签中的所有属性"""
+        attributes = {}
+        # 匹配属性名="属性值" 或 属性名='属性值'
+        attr_pattern = r'(\w+(?:-\w+)?)\s*=\s*["\']([^"\']*)["\']'
+        for match in re.finditer(attr_pattern, tag_content):
+            attr_name = match.group(1)
+            attr_value = match.group(2)
+            attributes[attr_name.lower()] = attr_value
+        return attributes
+    
+    def convert_asp_label(self, match) -> str:
+        """转换 asp:Label 到 th 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
         
-        def extract_button_attributes(attrs_text):
-            """提取按钮属性并转换为md-outlined-button格式"""
-            # 提取ID
-            id_match = re.search(r'ID="([^"]+)"', attrs_text, re.IGNORECASE)
-            button_id = id_match.group(1) if id_match else ""
+        # 提取ID和Text
+        label_id = attrs.get('id', '')
+        text = attrs.get('text', '')
+        css_class = attrs.get('cssclass', '')
+        
+        # 构建th标签
+        th_attrs = []
+        if label_id:
+            th_attrs.append(f'th:id="{label_id}"')
+        if css_class:
+            th_attrs.append(f'class="{css_class}"')
+        
+        # 获取标签内容（如果不是自闭合）
+        content_match = re.search(r'<asp:Label[^>]*>(.*?)</asp:Label>', full_tag, re.DOTALL)
+        if content_match:
+            inner_content = content_match.group(1)
+            if inner_content.strip():
+                text = inner_content
+        
+        attrs_str = ' ' + ' '.join(th_attrs) if th_attrs else ''
+        
+        if text:
+            return f'<span{attrs_str} th:text="{text}"></span>'
+        else:
+            return f'<span{attrs_str}></span>'
+    
+    def convert_asp_textbox(self, match) -> str:
+        """转换 asp:TextBox 到 input 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        # 提取属性
+        textbox_id = attrs.get('id', '')
+        text_mode = attrs.get('textmode', 'SingleLine').lower()
+        css_class = attrs.get('cssclass', '')
+        max_length = attrs.get('maxlength', '')
+        width = attrs.get('width', '')
+        enabled = attrs.get('enabled', 'true')
+        text = attrs.get('text', '')
+        
+        # 确定input类型
+        input_type = 'text'
+        if text_mode == 'multiline':
+            # 多行文本使用textarea
+            th_attrs = []
+            if textbox_id:
+                th_attrs.append(f'th:id="{textbox_id}"')
+            if css_class:
+                th_attrs.append(f'class="{css_class}"')
+            if max_length:
+                th_attrs.append(f'maxlength="{max_length}"')
+            if width:
+                th_attrs.append(f'style="width: {width};"')
+            if enabled == 'false':
+                th_attrs.append('disabled')
             
-            # 提取Text
-            text_match = re.search(r'Text="([^"]+)"', attrs_text, re.IGNORECASE)
-            button_text = text_match.group(1) if text_match else "Button"
+            attrs_str = ' ' + ' '.join(th_attrs) if th_attrs else ''
             
-            # 提取其他属性（如CssClass, OnClick等）
-            other_attrs = []
-            # 排除已处理的ID和Text
-            remaining_attrs = re.sub(r'ID="[^"]+"', '', attrs_text, flags=re.IGNORECASE)
-            remaining_attrs = re.sub(r'Text="[^"]+"', '', remaining_attrs, flags=re.IGNORECASE)
-            
-            # 转换CssClass为class
-            class_match = re.search(r'CssClass="([^"]+)"', remaining_attrs, re.IGNORECASE)
-            if class_match:
-                other_attrs.append(f'class="{class_match.group(1)}"')
-                remaining_attrs = re.sub(r'CssClass="[^"]+"', '', remaining_attrs, flags=re.IGNORECASE)
-            
-            # 保留其他属性
-            other_attrs_str = ' '.join([attr for attr in remaining_attrs.split() if attr.strip()])
-            
-            # 构建新的按钮标签
-            attrs_list = []
-            if button_id:
-                attrs_list.append(f'th:id="{button_id}"')
-            if button_text:
-                attrs_list.append(f'>{button_text}</md-outlined-button>')
-                # 如果有其他属性，添加到开始标签
-                if other_attrs_str or attrs_list:
-                    attrs_str = ' '.join([a for a in attrs_list if not a.startswith('>')])
-                    return f'<md-outlined-button {attrs_str} {other_attrs_str}'
+            if text:
+                return f'<textarea{attrs_str} th:text="{text}"></textarea>'
             else:
-                # 如果没有文本，使用自闭合形式
-                attrs_str = ' '.join(attrs_list)
-                return f'<md-outlined-button {attrs_str} {other_attrs_str} />'
+                return f'<textarea{attrs_str}></textarea>'
+        else:
+            # 单行文本框
+            th_attrs = []
+            if textbox_id:
+                th_attrs.append(f'th:id="{textbox_id}"')
+            if css_class:
+                th_attrs.append(f'class="{css_class}"')
+            if max_length:
+                th_attrs.append(f'maxlength="{max_length}"')
+            if width:
+                th_attrs.append(f'style="width: {width};"')
+            if enabled == 'false':
+                th_attrs.append('disabled')
+            if text:
+                th_attrs.append(f'th:value="{text}"')
+            
+            attrs_str = ' ' + ' '.join(th_attrs) if th_attrs else ''
+            return f'<input type="{input_type}"{attrs_str} />'
+    
+    def convert_asp_button(self, match) -> str:
+        """转换 asp:Button 到 md-outlined-button"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
         
-        # 处理按钮转换
-        def convert_button_self_closed(match):
-            attrs = match.group(1)
-            try:
-                return extract_button_attributes(attrs)
-            except Exception as e:
-                print(f"警告：第{line_num}行按钮转换失败 - {e}")
-                return f'<!-- 无法转换的按钮: {match.group(0)} -->'
+        button_id = attrs.get('id', '')
+        text = attrs.get('text', 'Button')
+        css_class = attrs.get('cssclass', '')
+        onclick = attrs.get('onclick', '')
+        enabled = attrs.get('enabled', 'true')
         
-        def convert_button_closed(match):
-            attrs = match.group(1)
-            content_between = match.group(2)
-            try:
-                result = extract_button_attributes(attrs)
-                # 如果标签内有内容，需要特殊处理
-                if content_between.strip():
-                    return f'{result}>{content_between}</md-outlined-button>'
-                return result
-            except Exception as e:
-                print(f"警告：第{line_num}行按钮转换失败 - {e}")
-                return f'<!-- 无法转换的按钮: {match.group(0)} -->'
+        # 构建md-outlined-button属性
+        md_attrs = []
+        if button_id:
+            md_attrs.append(f'th:id="{button_id}"')
+        if css_class:
+            md_attrs.append(f'class="{css_class}"')
+        if onclick:
+            # 转换onclick事件
+            onclick = re.sub(r'this\.', 'this.', onclick)
+            md_attrs.append(f'th:onclick="{|{onclick}|}"')
+        if enabled == 'false':
+            md_attrs.append('disabled')
         
-        converted_line = re.sub(button_pattern_self_closed, convert_button_self_closed, converted_line, flags=re.IGNORECASE)
-        converted_line = re.sub(button_pattern_closed, convert_button_closed, converted_line, flags=re.IGNORECASE | re.DOTALL)
+        attrs_str = ' ' + ' '.join(md_attrs) if md_attrs else ''
+        return f'<md-outlined-button{attrs_str}>{text}</md-outlined-button>'
+    
+    def convert_asp_linkbutton(self, match) -> str:
+        """转换 asp:LinkButton 到 a 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
         
-        # 2. 转换图片路径为 ./images
-        # 匹配img标签中的src属性
-        def convert_image_path(match):
+        link_id = attrs.get('id', '')
+        text = attrs.get('text', '')
+        css_class = attrs.get('cssclass', '')
+        onclick = attrs.get('onclick', '')
+        enabled = attrs.get('enabled', 'true')
+        
+        # 构建a标签属性
+        a_attrs = []
+        if link_id:
+            a_attrs.append(f'th:id="{link_id}"')
+        if css_class:
+            a_attrs.append(f'class="{css_class}"')
+        if onclick:
+            a_attrs.append(f'th:onclick="{|{onclick}|}"')
+        if enabled == 'false':
+            a_attrs.append('disabled')
+        
+        a_attrs.append('href="javascript:void(0)"')
+        
+        attrs_str = ' ' + ' '.join(a_attrs) if a_attrs else ''
+        return f'<a{attrs_str} th:text="{text}"></a>'
+    
+    def convert_asp_dropdownlist(self, match) -> str:
+        """转换 asp:DropDownList 到 select 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        ddl_id = attrs.get('id', '')
+        css_class = attrs.get('cssclass', '')
+        enabled = attrs.get('enabled', 'true')
+        
+        # 提取选项
+        options = []
+        items_pattern = r'<asp:ListItem[^>]*>(.*?)</asp:ListItem>'
+        for item_match in re.finditer(items_pattern, full_tag, re.DOTALL):
+            item_attrs = self.extract_attributes(item_match.group(0))
+            item_text = item_match.group(1) if item_match.group(1) else item_attrs.get('text', '')
+            item_value = item_attrs.get('value', item_text)
+            selected = item_attrs.get('selected', 'false') == 'true'
+            
+            selected_attr = ' selected' if selected else ''
+            options.append(f'<option value="{item_value}"{selected_attr}>{item_text}</option>')
+        
+        # 构建select标签
+        select_attrs = []
+        if ddl_id:
+            select_attrs.append(f'th:id="{ddl_id}"')
+        if css_class:
+            select_attrs.append(f'class="{css_class}"')
+        if enabled == 'false':
+            select_attrs.append('disabled')
+        
+        attrs_str = ' ' + ' '.join(select_attrs) if select_attrs else ''
+        
+        options_html = '\n            '.join(options) if options else '<option>请选择</option>'
+        
+        return f'<select{attrs_str}>\n            {options_html}\n        </select>'
+    
+    def convert_asp_checkbox(self, match) -> str:
+        """转换 asp:CheckBox 到 input checkbox"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        chk_id = attrs.get('id', '')
+        text = attrs.get('text', '')
+        css_class = attrs.get('cssclass', '')
+        checked = attrs.get('checked', 'false') == 'true'
+        enabled = attrs.get('enabled', 'true')
+        
+        # 构建checkbox
+        checkbox_attrs = []
+        if chk_id:
+            checkbox_attrs.append(f'th:id="{chk_id}"')
+        if css_class:
+            checkbox_attrs.append(f'class="{css_class}"')
+        if checked:
+            checkbox_attrs.append('checked')
+        if enabled == 'false':
+            checkbox_attrs.append('disabled')
+        
+        checkbox_attrs.append('type="checkbox"')
+        
+        attrs_str = ' ' + ' '.join(checkbox_attrs) if checkbox_attrs else ''
+        
+        if text:
+            return f'<label><input{attrs_str} /> <span th:text="{text}"></span></label>'
+        else:
+            return f'<input{attrs_str} />'
+    
+    def convert_asp_radiobutton(self, match) -> str:
+        """转换 asp:RadioButton 到 input radio"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        radio_id = attrs.get('id', '')
+        group_name = attrs.get('groupname', '')
+        text = attrs.get('text', '')
+        css_class = attrs.get('cssclass', '')
+        checked = attrs.get('checked', 'false') == 'true'
+        enabled = attrs.get('enabled', 'true')
+        
+        # 构建radio
+        radio_attrs = []
+        if radio_id:
+            radio_attrs.append(f'th:id="{radio_id}"')
+        if group_name:
+            radio_attrs.append(f'name="{group_name}"')
+        if css_class:
+            radio_attrs.append(f'class="{css_class}"')
+        if checked:
+            radio_attrs.append('checked')
+        if enabled == 'false':
+            radio_attrs.append('disabled')
+        
+        radio_attrs.append('type="radio"')
+        
+        attrs_str = ' ' + ' '.join(radio_attrs) if radio_attrs else ''
+        
+        if text:
+            return f'<label><input{attrs_str} /> <span th:text="{text}"></span></label>'
+        else:
+            return f'<input{attrs_str} />'
+    
+    def convert_asp_image(self, match) -> str:
+        """转换 asp:Image 到 img 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        image_id = attrs.get('id', '')
+        image_url = attrs.get('imageurl', '')
+        alternate_text = attrs.get('alternatetext', '')
+        css_class = attrs.get('cssclass', '')
+        width = attrs.get('width', '')
+        height = attrs.get('height', '')
+        
+        # 处理图片路径
+        if image_url:
+            # 提取文件名
+            filename = os.path.basename(image_url)
+            image_url = f'./images/{filename}'
+        
+        # 构建img标签
+        img_attrs = []
+        if image_id:
+            img_attrs.append(f'th:id="{image_id}"')
+        if image_url:
+            img_attrs.append(f'th:src="@{{{image_url}}}"')
+        if alternate_text:
+            img_attrs.append(f'th:alt="{alternate_text}"')
+        if css_class:
+            img_attrs.append(f'class="{css_class}"')
+        if width:
+            img_attrs.append(f'width="{width}"')
+        if height:
+            img_attrs.append(f'height="{height}"')
+        
+        attrs_str = ' ' + ' '.join(img_attrs) if img_attrs else ''
+        return f'<img{attrs_str} />'
+    
+    def convert_asp_hyperlink(self, match) -> str:
+        """转换 asp:HyperLink 到 a 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        link_id = attrs.get('id', '')
+        navigate_url = attrs.get('navigateurl', '#')
+        text = attrs.get('text', '')
+        css_class = attrs.get('cssclass', '')
+        target = attrs.get('target', '')
+        
+        # 构建a标签
+        a_attrs = []
+        if link_id:
+            a_attrs.append(f'th:id="{link_id}"')
+        if navigate_url and navigate_url != '#':
+            # 处理URL路径
+            if not navigate_url.startswith('http') and not navigate_url.startswith('/'):
+                navigate_url = f'./{navigate_url}'
+            a_attrs.append(f'th:href="@{{{navigate_url}}}"')
+        else:
+            a_attrs.append('href="javascript:void(0)"')
+        if css_class:
+            a_attrs.append(f'class="{css_class}"')
+        if target:
+            a_attrs.append(f'target="{target}"')
+        
+        attrs_str = ' ' + ' '.join(a_attrs) if a_attrs else ''
+        
+        if text:
+            return f'<a{attrs_str} th:text="{text}"></a>'
+        else:
+            # 获取标签内容
+            content_match = re.search(r'<asp:HyperLink[^>]*>(.*?)</asp:HyperLink>', full_tag, re.DOTALL)
+            if content_match:
+                inner_content = content_match.group(1)
+                return f'<a{attrs_str}>{inner_content}</a>'
+            return f'<a{attrs_str}></a>'
+    
+    def convert_asp_panel(self, match) -> str:
+        """转换 asp:Panel 到 div 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        panel_id = attrs.get('id', '')
+        css_class = attrs.get('cssclass', '')
+        visible = attrs.get('visible', 'true')
+        
+        # 构建div标签
+        div_attrs = []
+        if panel_id:
+            div_attrs.append(f'th:id="{panel_id}"')
+        if css_class:
+            div_attrs.append(f'class="{css_class}"')
+        if visible == 'false':
+            div_attrs.append('th:style="display: none"')
+        
+        # 获取面板内容
+        content_match = re.search(r'<asp:Panel[^>]*>(.*?)</asp:Panel>', full_tag, re.DOTALL)
+        inner_content = content_match.group(1) if content_match else ''
+        
+        attrs_str = ' ' + ' '.join(div_attrs) if div_attrs else ''
+        return f'<div{attrs_str}>{inner_content}</div>'
+    
+    def convert_asp_placeholder(self, match) -> str:
+        """转换 asp:PlaceHolder 到 div 标签"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        ph_id = attrs.get('id', '')
+        
+        # 获取占位符内容
+        content_match = re.search(r'<asp:PlaceHolder[^>]*>(.*?)</asp:PlaceHolder>', full_tag, re.DOTALL)
+        inner_content = content_match.group(1) if content_match else ''
+        
+        if ph_id:
+            return f'<div th:id="{ph_id}">{inner_content}</div>'
+        else:
+            return inner_content
+    
+    def convert_asp_repeater(self, match) -> str:
+        """转换 asp:Repeater 到 th:each 循环"""
+        full_tag = match.group(0)
+        attrs = self.extract_attributes(full_tag)
+        
+        repeater_id = attrs.get('id', '')
+        data_source = attrs.get('datasourceid', '')
+        
+        # 提取模板
+        item_template = re.search(r'<ItemTemplate>(.*?)</ItemTemplate>', full_tag, re.DOTALL)
+        alternating_item_template = re.search(r'<AlternatingItemTemplate>(.*?)</AlternatingItemTemplate>', full_tag, re.DOTALL)
+        
+        template_content = item_template.group(1) if item_template else ''
+        
+        # 创建循环容器
+        container_attrs = []
+        if repeater_id:
+            container_attrs.append(f'th:id="{repeater_id}"')
+        if data_source:
+            container_attrs.append(f'th:each="item : ${{{data_source}}}"')
+        
+        attrs_str = ' ' + ' '.join(container_attrs) if container_attrs else ''
+        
+        # 转换模板中的绑定表达式
+        template_content = self.convert_bindings(template_content)
+        
+        return f'<div{attrs_str}>{template_content}</div>'
+    
+    def convert_bindings(self, content: str) -> str:
+        """转换数据绑定表达式"""
+        # 转换 <%# Eval("Field") %> 到 ${item.field}
+        content = re.sub(r'<%#\s*Eval\(["\']([^"\']+)["\']\)\s*%>', r'${item.\1}', content)
+        # 转换 <%# Bind("Field") %> 到 *{field}
+        content = re.sub(r'<%#\s*Bind\(["\']([^"\']+)["\']\)\s*%>', r'*{\1}', content)
+        # 转换 <%= expression %> 到 [[${expression}]]
+        content = re.sub(r'<%=([^%]+)%>', r'[[${\1}]]', content)
+        
+        return content
+    
+    def process_image_paths(self, content: str) -> str:
+        """处理所有图片路径"""
+        # 处理img标签中的src
+        def replace_img_src(match):
             full_tag = match.group(0)
             src_match = re.search(r'src=["\']([^"\']+)["\']', full_tag)
             if src_match:
-                original_path = src_match.group(1)
-                # 提取文件名
-                filename = os.path.basename(original_path)
+                old_path = src_match.group(1)
+                filename = os.path.basename(old_path)
                 new_path = f'./images/{filename}'
-                new_tag = full_tag.replace(original_path, new_path)
-                return new_tag
+                return full_tag.replace(old_path, new_path)
             return full_tag
         
-        # 处理图片标签
-        img_pattern = r'<img[^>]*src=["\'][^"\']*["\'][^>]*>'
-        converted_line = re.sub(img_pattern, convert_image_path, converted_line, flags=re.IGNORECASE)
+        content = re.sub(r'<img[^>]*src=["\'][^"\']*["\'][^>]*>', replace_img_src, content, flags=re.IGNORECASE)
         
-        # 处理背景图片等CSS中的图片路径
-        bg_pattern = r'background(-image)?\s*:\s*url\(["\']?([^"\'\)]+)["\']?\)'
-        def convert_bg_path(match):
-            original_path = match.group(2)
-            filename = os.path.basename(original_path)
-            new_path = f'./images/{filename}'
-            return match.group(0).replace(original_path, new_path)
-        converted_line = re.sub(bg_pattern, convert_bg_path, converted_line, flags=re.IGNORECASE)
+        # 处理CSS中的背景图片
+        content = re.sub(r'url\(["\']?([^"\'\)]+)["\']?\)', 
+                        lambda m: f'url(./images/{os.path.basename(m.group(1))})', 
+                        content)
         
-        # 3. 在body标签上添加 th:fragment="content"
-        body_pattern = r'<body([^>]*)>'
-        def add_th_fragment(match):
-            attrs = match.group(1)
-            if 'th:fragment' not in attrs:
-                if attrs:
-                    return f'<body{attrs} th:fragment="content">'
-                else:
-                    return '<body th:fragment="content">'
-            return match.group(0)
+        return content
+    
+    def add_thymeleaf_namespace(self, content: str) -> str:
+        """添加Thymeleaf命名空间"""
+        if 'xmlns:th="http://www.thymeleaf.org"' not in content:
+            # 在html标签中添加命名空间
+            content = re.sub(
+                r'<html([^>]*)>',
+                r'<html\1 xmlns:th="http://www.thymeleaf.org">',
+                content,
+                count=1,
+                flags=re.IGNORECASE
+            )
+        return content
+    
+    def add_fragment_to_body(self, content: str) -> str:
+        """在body标签中添加fragment"""
+        if 'th:fragment' not in content:
+            content = re.sub(
+                r'<body([^>]*)>',
+                r'<body\1 th:fragment="content">',
+                content,
+                flags=re.IGNORECASE
+            )
+        return content
+    
+    def convert_aspx_to_thymeleaf(self, input_file: str, output_file: Optional[str] = None) -> bool:
+        """主转换方法"""
+        self.log(f"开始转换文件: {input_file}")
         
-        if '<body' in converted_line.lower():
-            converted_line = re.sub(body_pattern, add_th_fragment, converted_line, flags=re.IGNORECASE)
-            body_has_fragment = True
+        # 读取输入文件
+        try:
+            with open(input_file, 'r', encoding='shift-jis') as f:
+                content = f.read()
+            self.log("成功读取文件（Shift-JIS编码）")
+        except UnicodeDecodeError:
+            try:
+                with open(input_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.log("成功读取文件（UTF-8编码）")
+            except Exception as e:
+                self.log(f"读取文件失败: {e}", "ERROR")
+                return False
         
-        # 4. 注释掉无法转换的ASPX控件
-        # 匹配其他ASP.NET服务器控件
-        aspx_controls = [
-            (r'<asp:TextBox[^>]*?>.*?</asp:TextBox>', 'asp:TextBox'),
-            (r'<asp:TextBox[^>]*?/>', 'asp:TextBox'),
-            (r'<asp:Label[^>]*?>.*?</asp:Label>', 'asp:Label'),
-            (r'<asp:Label[^>]*?/>', 'asp:Label'),
-            (r'<asp:GridView[^>]*?>.*?</asp:GridView>', 'asp:GridView'),
-            (r'<asp:GridView[^>]*?/>', 'asp:GridView'),
-            (r'<asp:DropDownList[^>]*?>.*?</asp:DropDownList>', 'asp:DropDownList'),
-            (r'<asp:DropDownList[^>]*?/>', 'asp:DropDownList'),
-            (r'<asp:CheckBox[^>]*?>.*?</asp:CheckBox>', 'asp:CheckBox'),
-            (r'<asp:CheckBox[^>]*?/>', 'asp:CheckBox'),
-            (r'<asp:RadioButton[^>]*?>.*?</asp:RadioButton>', 'asp:RadioButton'),
-            (r'<asp:RadioButton[^>]*?/>', 'asp:RadioButton'),
-            (r'<asp:Panel[^>]*?>.*?</asp:Panel>', 'asp:Panel'),
-            (r'<asp:Panel[^>]*?/>', 'asp:Panel'),
-            (r'<asp:PlaceHolder[^>]*?>.*?</asp:PlaceHolder>', 'asp:PlaceHolder'),
-            (r'<asp:PlaceHolder[^>]*?/>', 'asp:PlaceHolder'),
-            (r'<asp:HyperLink[^>]*?>.*?</asp:HyperLink>', 'asp:HyperLink'),
-            (r'<asp:HyperLink[^>]*?/>', 'asp:HyperLink'),
-            (r'<asp:Image[^>]*?>.*?</asp:Image>', 'asp:Image'),
-            (r'<asp:Image[^>]*?/>', 'asp:Image'),
-            (r'<asp:LinkButton[^>]*?>.*?</asp:LinkButton>', 'asp:LinkButton'),
-            (r'<asp:LinkButton[^>]*?/>', 'asp:LinkButton'),
+        original_content = content
+        
+        # 定义转换规则（按顺序执行）
+        conversions = [
+            (r'<asp:Label\b[^>]*>.*?</asp:Label>', self.convert_asp_label, 'Label'),
+            (r'<asp:Label\b[^>]*?/>', self.convert_asp_label, 'Label'),
+            (r'<asp:TextBox\b[^>]*>.*?</asp:TextBox>', self.convert_asp_textbox, 'TextBox'),
+            (r'<asp:TextBox\b[^>]*?/>', self.convert_asp_textbox, 'TextBox'),
+            (r'<asp:Button\b[^>]*>.*?</asp:Button>', self.convert_asp_button, 'Button'),
+            (r'<asp:Button\b[^>]*?/>', self.convert_asp_button, 'Button'),
+            (r'<asp:LinkButton\b[^>]*>.*?</asp:LinkButton>', self.convert_asp_linkbutton, 'LinkButton'),
+            (r'<asp:LinkButton\b[^>]*?/>', self.convert_asp_linkbutton, 'LinkButton'),
+            (r'<asp:DropDownList\b[^>]*>.*?</asp:DropDownList>', self.convert_asp_dropdownlist, 'DropDownList'),
+            (r'<asp:CheckBox\b[^>]*>.*?</asp:CheckBox>', self.convert_asp_checkbox, 'CheckBox'),
+            (r'<asp:CheckBox\b[^>]*?/>', self.convert_asp_checkbox, 'CheckBox'),
+            (r'<asp:RadioButton\b[^>]*>.*?</asp:RadioButton>', self.convert_asp_radiobutton, 'RadioButton'),
+            (r'<asp:RadioButton\b[^>]*?/>', self.convert_asp_radiobutton, 'RadioButton'),
+            (r'<asp:Image\b[^>]*>.*?</asp:Image>', self.convert_asp_image, 'Image'),
+            (r'<asp:Image\b[^>]*?/>', self.convert_asp_image, 'Image'),
+            (r'<asp:HyperLink\b[^>]*>.*?</asp:HyperLink>', self.convert_asp_hyperlink, 'HyperLink'),
+            (r'<asp:Panel\b[^>]*>.*?</asp:Panel>', self.convert_asp_panel, 'Panel'),
+            (r'<asp:PlaceHolder\b[^>]*>.*?</asp:PlaceHolder>', self.convert_asp_placeholder, 'PlaceHolder'),
+            (r'<asp:Repeater\b[^>]*>.*?</asp:Repeater>', self.convert_asp_repeater, 'Repeater'),
         ]
         
-        for pattern, control_name in aspx_controls:
-            matches = re.finditer(pattern, converted_line, re.IGNORECASE | re.DOTALL)
-            for match in matches:
-                matched_text = match.group(0)
-                # 注释掉无法转换的控件
-                commented = f'<!-- 无法转换的{control_name}控件，需要手动处理: {matched_text} -->'
-                converted_line = converted_line.replace(matched_text, commented)
+        # 执行转换
+        for pattern, converter, control_name in conversions:
+            try:
+                new_content = re.sub(pattern, converter, content, flags=re.IGNORECASE | re.DOTALL)
+                if new_content != content:
+                    self.log(f"转换 {control_name} 控件", "SUCCESS")
+                    self.success_count += 1
+                    content = new_content
+            except Exception as e:
+                self.log(f"转换 {control_name} 失败: {e}", "WARNING")
+                self.warning_count += 1
         
-        # 5. 处理服务器端代码块 <%= %> 和 <%# %> 等
-        server_code_patterns = [
-            (r'<%=([^%]+)%>', '服务器端表达式'),
-            (r'<%#([^%]+)%>', '数据绑定表达式'),
-            (r'<%\$([^%]+)%>', '资源表达式'),
-            (r'<%@[^%]+%>', '指令'),
-            (r'<%--[^%]+--%>', '服务器端注释'),
-            (r'<script\s+runat="server"[^>]*>.*?</script>', '服务器端脚本'),
-            (r'<%!?[^=][^%]*%>', '服务器端代码块'),
+        # 注释掉无法转换的ASPX代码
+        aspx_pattern = r'<asp:\w+[^>]*>.*?</asp:\w+>|<asp:\w+[^>]*?/>'
+        def comment_aspx(match):
+            matched = match.group(0)
+            self.log(f"注释无法转换的ASPX代码: {matched[:100]}...", "WARNING")
+            self.warning_count += 1
+            return f'<!-- 需要手动处理: {matched} -->'
+        
+        content = re.sub(aspx_pattern, comment_aspx, content, flags=re.IGNORECASE | re.DOTALL)
+        
+        # 处理服务器端代码
+        server_patterns = [
+            (r'<%=([^%]+)%>', r'[[${\1}]]', '服务器端表达式'),
+            (r'<%#([^%]+)%>', r'[[${\1}]]', '数据绑定'),
+            (r'<%@[^%]+%>', '', '指令'),
+            (r'<%--[^%]+--%>', '', '服务器注释'),
+            (r'<script\s+runat="server"[^>]*>.*?</script>', '', '服务器脚本'),
         ]
         
-        for pattern, code_type in server_code_patterns:
-            def comment_server_code(match, ct=code_type):
-                return f'<!-- 无法转换的{ct}: {match.group(0)} -->'
-            converted_line = re.sub(pattern, comment_server_code, converted_line, flags=re.IGNORECASE | re.DOTALL)
+        for pattern, replacement, code_type in server_patterns:
+            content = re.sub(pattern, replacement, content, flags=re.IGNORECASE | re.DOTALL)
         
-        converted_lines.append(converted_line)
-    
-    # 重新组合转换后的内容
-    converted_content = '\n'.join(converted_lines)
-    
-    # 如果没有找到body标签，在文件开头添加警告
-    if not body_has_fragment:
-        warning = '<!-- 警告：未找到body标签，请手动添加 th:fragment="content" -->\n'
-        converted_content = warning + converted_content
-    
-    # 生成输出文件名
-    if output_file is None:
-        input_path = Path(input_file)
-        output_file = input_path.stem + '_converted.html'
-    
-    # 写入输出文件（使用utf-8编码）
-    try:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(converted_content)
-        print(f"成功转换并保存到: {output_file}")
-        return True
-    except Exception as e:
-        print(f"错误：无法写入输出文件 - {e}")
-        return False
-
-def batch_convert(directory):
-    """批量转换目录中的所有ASPX文件"""
-    aspx_files = list(Path(directory).glob('*.aspx'))
-    if not aspx_files:
-        print(f"在目录 {directory} 中未找到ASPX文件")
-        return
-    
-    print(f"找到 {len(aspx_files)} 个ASPX文件")
-    success_count = 0
-    
-    for aspx_file in aspx_files:
-        print(f"\n正在转换: {aspx_file}")
-        if convert_aspx_to_thymeleaf(str(aspx_file)):
-            success_count += 1
-    
-    print(f"\n转换完成！成功: {success_count}/{len(aspx_files)}")
+        # 处理图片路径
+        content = self.process_image_paths(content)
+        
+        # 添加Thymeleaf命名空间
+        content = self.add_thymeleaf_namespace(content)
+        
+        # 添加body fragment
+        content = self.add_fragment_to_body(content)
+        
+        # 生成输出文件名
+        if output_file is None:
+            input_path = Path(input_file)
+            output_file = input_path.stem + '.html'
+        
+        # 写入输出文件
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            self.log(f"转换完成！输出文件: {output_file}", "SUCCESS")
+            self.log(f"统计: 成功转换 {self.success_count} 个控件, {self.warning_count} 个警告", "INFO")
+            return True
+        except Exception as e:
+            self.log(f"写入文件失败: {e}", "ERROR")
+            return False
 
 def main():
     """主函数"""
     if len(sys.argv) < 2:
         print("使用方法:")
-        print("  转换单个文件: python aspx_converter.py <input_file.aspx> [output_file.html]")
-        print("  批量转换: python aspx_converter.py --batch <directory>")
+        print("  python aspx_converter.py <input.aspx> [output.html]")
+        print("\n示例:")
+        print("  python aspx_converter.py page.aspx")
+        print("  python aspx_converter.py page.aspx converted.html")
         return
     
-    if sys.argv[1] == '--batch':
-        if len(sys.argv) < 3:
-            print("请指定要转换的目录")
-            return
-        batch_convert(sys.argv[2])
-    else:
-        input_file = sys.argv[1]
-        output_file = sys.argv[2] if len(sys.argv) > 2 else None
-        convert_aspx_to_thymeleaf(input_file, output_file)
+    converter = ASPXToThymeleafConverter()
+    input_file = sys.argv[1]
+    output_file = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    success = converter.convert_aspx_to_thymeleaf(input_file, output_file)
+    
+    if not success:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
