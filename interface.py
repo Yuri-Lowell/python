@@ -20,7 +20,7 @@ class CSharpToJavaConverter:
         # C#类型到Java类型的映射
         self.type_mappings = {
             # 基本类型
-            'string': 'String',
+            'string': 'String',  # string -> String
             'int': 'int',
             'long': 'long',
             'double': 'double',
@@ -64,18 +64,37 @@ class CSharpToJavaConverter:
             'files_failed': 0
         }
 
+    def remove_i_prefix(self, class_name: str) -> str:
+        """
+        去掉类名的I前缀
+        例如: IUserRepository -> UserRepository, IUser -> User
+        """
+        if class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper():
+            return class_name[1:]
+        return class_name
+
     def get_java_interface_name(self, cs_filename: str) -> str:
         """根据C#文件名生成Java接口文件名"""
         base_name = Path(cs_filename).stem
         
         # 去掉I前缀
-        if base_name.startswith('I') and len(base_name) > 1 and base_name[1].isupper():
-            base_name = base_name[1:]
+        base_name = self.remove_i_prefix(base_name)
         
         # 添加Service后缀
         java_name = base_name + 'Service'
         
         return java_name + '.java'
+
+    def convert_type_name(self, type_name: str) -> str:
+        """
+        转换类型名称，去掉Entity类型的I前缀
+        """
+        # 先转换基本类型
+        if type_name in self.type_mappings:
+            return self.type_mappings[type_name]
+        
+        # 去掉I前缀
+        return self.remove_i_prefix(type_name)
 
     def convert_file(self, input_path: str, output_path: str = None) -> bool:
         """转换单个C#接口文件为Java接口文件"""
@@ -171,29 +190,9 @@ class CSharpToJavaConverter:
         in_interface = False
         interface_start_line = -1
         brace_count = 0
-        in_multiline_comment = False
-        collecting_xml_comment = False
-        xml_comment_lines = []
         
         while i < len(lines):
             line = lines[i]
-            original_line = line
-            
-            # 处理多行注释状态
-            if '/*' in line and not in_multiline_comment:
-                in_multiline_comment = True
-            
-            # 收集XML注释行（///开头的连续行）
-            if line.strip().startswith('///') and not in_interface:
-                xml_comment_lines.append(line)
-                i += 1
-                continue
-            elif xml_comment_lines and not line.strip().startswith('///'):
-                # 处理收集到的XML注释
-                converted_comment = self._convert_xml_comment(xml_comment_lines)
-                if converted_comment:
-                    converted_lines.append(converted_comment)
-                xml_comment_lines = []
             
             # 跳过using语句
             if line.strip().startswith('using '):
@@ -203,6 +202,18 @@ class CSharpToJavaConverter:
             # 跳过namespace行
             if line.strip().startswith('namespace '):
                 i += 1
+                continue
+            
+            # 处理接口外部的注释
+            if not in_interface and (line.strip().startswith('///') or line.strip().startswith('//')):
+                # 收集并转换注释
+                comment_lines = []
+                while i < len(lines) and (lines[i].strip().startswith('///') or lines[i].strip().startswith('//')):
+                    comment_lines.append(lines[i])
+                    i += 1
+                converted_comment = self._convert_comment_block(comment_lines)
+                if converted_comment:
+                    converted_lines.append(converted_comment)
                 continue
             
             # 检测接口开始
@@ -221,16 +232,15 @@ class CSharpToJavaConverter:
                 brace_count += line.count('{') - line.count('}')
                 
                 # 处理接口内的注释
-                if line.strip().startswith('///'):
-                    # 收集方法上的XML注释
-                    xml_comment_lines = [line]
-                    # 继续收集后续的注释行
+                if line.strip().startswith('///') or line.strip().startswith('//'):
+                    comment_lines = [line]
                     j = i + 1
-                    while j < len(lines) and lines[j].strip().startswith('///'):
-                        xml_comment_lines.append(lines[j])
+                    while j < len(lines) and (lines[j].strip().startswith('///') or lines[j].strip().startswith('//')):
+                        comment_lines.append(lines[j])
                         j += 1
+                    
                     # 转换注释
-                    converted_comment = self._convert_xml_comment(xml_comment_lines)
+                    converted_comment = self._convert_comment_block(comment_lines)
                     if converted_comment:
                         converted_lines.append(converted_comment)
                     i = j
@@ -248,13 +258,6 @@ class CSharpToJavaConverter:
                 elif re.search(r'\bevent\s+\w+\s+\w+', line):
                     converted_line = self._convert_event_line(line)
                     converted_lines.append(converted_line)
-                # 处理普通注释行
-                elif line.strip().startswith('//'):
-                    content = line.strip()[2:].strip()
-                    if content:
-                        converted_lines.append(f'    // {content}')
-                    else:
-                        converted_lines.append('    //')
                 else:
                     # 其他行：转换类型引用，但跳过空行和大括号
                     stripped = line.strip()
@@ -279,6 +282,30 @@ class CSharpToJavaConverter:
         result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
         
         return result.strip()
+
+    def _convert_comment_block(self, comment_lines: List[str]) -> str:
+        """转换注释块"""
+        if not comment_lines:
+            return ""
+        
+        # 检查是否都是XML注释（///）
+        is_xml = all(line.strip().startswith('///') for line in comment_lines)
+        
+        if is_xml:
+            return self._convert_xml_comment(comment_lines)
+        else:
+            # 普通注释，直接保留
+            result = []
+            for line in comment_lines:
+                if line.strip().startswith('//'):
+                    content = line.strip()[2:].strip()
+                    if content:
+                        result.append(f'    // {content}')
+                    else:
+                        result.append('    //')
+                else:
+                    result.append(line)
+            return '\n'.join(result)
 
     def _convert_xml_comment(self, xml_lines: List[str]) -> str:
         """转换XML注释为JavaDoc格式"""
@@ -361,14 +388,8 @@ class CSharpToJavaConverter:
         
         old_name = match.group(1)
         
-        # 去掉I前缀
-        if old_name.startswith('I') and len(old_name) > 1 and old_name[1].isupper():
-            base_name = old_name[1:]
-        else:
-            base_name = old_name
-        
-        # 添加Service后缀
-        new_name = base_name + 'Service'
+        # 去掉I前缀并添加Service后缀
+        new_name = self.remove_i_prefix(old_name) + 'Service'
         
         # 替换接口名
         line = line.replace(old_name, new_name)
@@ -395,8 +416,9 @@ class CSharpToJavaConverter:
 
     def _convert_method_line(self, line: str) -> str:
         """转换方法声明行"""
-        # 转换返回类型
+        # 转换返回类型（包括string -> String）
         for cs_type, java_type in self.type_mappings.items():
+            # 匹配返回类型
             line = re.sub(rf'\b{cs_type}\b(?=\s+\w+\s*\()', java_type, line)
         
         # 转换参数中的类型
@@ -427,7 +449,8 @@ class CSharpToJavaConverter:
         match = re.search(r'(\w+)\s+(\w+)\s*\{\s*get;\s*set;\s*\}', line)
         if match:
             prop_type, prop_name = match.groups()
-            java_type = self.type_mappings.get(prop_type, prop_type)
+            # 转换类型（包括string -> String）
+            java_type = self.type_mappings.get(prop_type, self.remove_i_prefix(prop_type))
             
             # 生成getter和setter方法声明
             getter = f'    {java_type} get{prop_name.capitalize()}();'
@@ -438,7 +461,7 @@ class CSharpToJavaConverter:
         match = re.search(r'(\w+)\s+(\w+)\s*\{\s*get;\s*\}', line)
         if match:
             prop_type, prop_name = match.groups()
-            java_type = self.type_mappings.get(prop_type, prop_type)
+            java_type = self.type_mappings.get(prop_type, self.remove_i_prefix(prop_type))
             return f'    {java_type} get{prop_name.capitalize()}();'
         
         return line
@@ -457,6 +480,7 @@ class CSharpToJavaConverter:
         def replace_param_type(match):
             params = match.group(1)
             for cs_type, java_type in self.type_mappings.items():
+                # 匹配参数类型（后面跟空格和参数名）
                 params = re.sub(rf'\b{cs_type}\b(?=\s+\w+)', java_type, params)
             return f'({params})'
         
@@ -464,7 +488,7 @@ class CSharpToJavaConverter:
 
     def _convert_types_in_line(self, line: str) -> str:
         """转换行中的类型引用"""
-        # 转换类型
+        # 转换类型（包括string -> String）
         for cs_type, java_type in self.type_mappings.items():
             line = re.sub(rf'\b{cs_type}\b(?=\s+\w+|\s*[\[<]|\s*$)', java_type, line)
         
@@ -490,7 +514,7 @@ class CSharpToJavaConverter:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description='C#接口转Java接口工具',
+        description='C#接口转Java接口工具 - string自动转换为String',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
