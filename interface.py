@@ -76,15 +76,30 @@ class CSharpToJavaConverter:
             'files_failed': 0
         }
 
-    def convert_file(self, input_path: str, output_path: str = None, 
-                     package_name: str = None) -> bool:
+    def get_java_interface_name(self, cs_filename: str) -> str:
+        """
+        根据C#文件名生成Java接口文件名
+        例如: IUserRepository.cs -> UserRepositoryService.java
+        """
+        # 获取不带扩展名的文件名
+        base_name = Path(cs_filename).stem
+        
+        # 去掉I前缀
+        if base_name.startswith('I') and len(base_name) > 1 and base_name[1].isupper():
+            base_name = base_name[1:]
+        
+        # 添加Service后缀
+        java_name = base_name + 'Service'
+        
+        return java_name + '.java'
+
+    def convert_file(self, input_path: str, output_path: str = None) -> bool:
         """
         转换单个C#接口文件为Java接口文件
         
         Args:
             input_path: 输入的C#文件路径
             output_path: 输出的Java文件路径（可选）
-            package_name: 自定义包名（可选）
         
         Returns:
             bool: 转换是否成功
@@ -95,14 +110,19 @@ class CSharpToJavaConverter:
                 csharp_code = file.read()
             
             # 转换代码
-            java_code = self.convert_interface(csharp_code, package_name)
+            java_code = self.convert_interface(csharp_code)
             
             # 确定输出路径
             if output_path is None:
-                output_path = input_path.replace('.cs', '.java')
+                # 自动生成输出文件名
+                input_file = Path(input_path)
+                java_filename = self.get_java_interface_name(input_file.name)
+                output_path = input_file.parent / java_filename
+            else:
+                output_path = Path(output_path)
             
             # 确保输出目录存在
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             
             # 写入转换后的代码
             with open(output_path, 'w', encoding='utf-8') as file:
@@ -118,8 +138,7 @@ class CSharpToJavaConverter:
             return False
 
     def convert_folder(self, folder_path: str, output_folder: str = None,
-                      pattern: str = "*.cs", recursive: bool = True,
-                      package_name: str = None) -> None:
+                      pattern: str = "*.cs", recursive: bool = True) -> None:
         """
         转换文件夹中的所有C#接口文件
         
@@ -128,7 +147,6 @@ class CSharpToJavaConverter:
             output_folder: 输出文件夹路径（可选）
             pattern: 文件匹配模式
             recursive: 是否递归处理子文件夹
-            package_name: 自定义包名（可选）
         """
         folder = Path(folder_path)
         if not folder.exists():
@@ -141,7 +159,7 @@ class CSharpToJavaConverter:
         else:
             cs_files = list(folder.glob(pattern))
         
-        # 过滤只包含接口的文件（可选）
+        # 过滤只包含接口的文件
         cs_files = [f for f in cs_files if self._is_interface_file(f)]
         
         if not cs_files:
@@ -160,12 +178,12 @@ class CSharpToJavaConverter:
         # 转换每个文件
         for cs_file in cs_files:
             if output_folder:
-                # 保持相对路径结构
-                rel_path = cs_file.relative_to(folder)
-                output_path = Path(output_folder) / rel_path.with_suffix('.java')
-                self.convert_file(str(cs_file), str(output_path), package_name)
+                # 生成新的Java文件名
+                java_filename = self.get_java_interface_name(cs_file.name)
+                output_path = Path(output_folder) / java_filename
+                self.convert_file(str(cs_file), str(output_path))
             else:
-                self.convert_file(str(cs_file), package_name=package_name)
+                self.convert_file(str(cs_file))
         
         # 打印统计信息
         self._print_stats()
@@ -178,15 +196,14 @@ class CSharpToJavaConverter:
                 # 检查是否包含interface关键字
                 return bool(re.search(r'\binterface\s+\w+', content))
         except:
-            return True  # 如果无法读取，默认尝试转换
+            return True
 
-    def convert_interface(self, csharp_code: str, package_name: str = None) -> str:
+    def convert_interface(self, csharp_code: str) -> str:
         """
         将C#接口代码转换为Java接口代码，保留所有注释
         
         Args:
             csharp_code: C#接口代码
-            package_name: 自定义包名（如果提供，将覆盖原有的namespace）
         
         Returns:
             str: 转换后的Java接口代码
@@ -198,15 +215,31 @@ class CSharpToJavaConverter:
         in_interface = False
         interface_start_line = -1
         brace_count = 0
-        current_interface_name = None
+        skip_until_interface = False
         
         while i < len(lines):
             line = lines[i]
             
-            # 处理注释（先处理，因为需要在转换前转换注释格式）
+            # 跳过using语句（直接删除）
+            if line.strip().startswith('using '):
+                i += 1
+                continue
+            
+            # 跳过namespace行（直接删除）
+            if line.strip().startswith('namespace '):
+                i += 1
+                continue
+            
+            # 跳过空行（但保留一些格式）
+            if not line.strip() and not in_interface:
+                i += 1
+                continue
+            
+            # 处理注释（转换XML注释为JavaDoc）
             if self._is_comment_line(line):
                 converted_line = self._convert_comment_format(line)
-                converted_lines.append(converted_line)
+                if converted_line.strip():  # 只添加非空注释行
+                    converted_lines.append(converted_line)
                 i += 1
                 continue
             
@@ -215,7 +248,7 @@ class CSharpToJavaConverter:
                 in_interface = True
                 interface_start_line = i
                 # 转换接口声明行（包括改名）
-                converted_line, current_interface_name = self._convert_interface_line(line)
+                converted_line = self._convert_interface_line(line)
                 converted_lines.append(converted_line)
                 i += 1
                 continue
@@ -240,7 +273,13 @@ class CSharpToJavaConverter:
                 else:
                     # 其他行：转换类型引用
                     converted_line = self._convert_types_in_line(line)
-                    converted_lines.append(converted_line)
+                    # 移除大括号行（接口中不需要）
+                    if converted_line.strip() == '{' or converted_line.strip() == '}':
+                        if converted_line.strip() == '}':
+                            # 保留最后的大括号
+                            converted_lines.append(converted_line)
+                    else:
+                        converted_lines.append(converted_line)
                 
                 # 检查接口结束
                 if brace_count == 0 and i > interface_start_line:
@@ -249,36 +288,14 @@ class CSharpToJavaConverter:
                 i += 1
                 continue
             
-            # 处理using语句（转换为import）
-            if line.strip().startswith('using '):
-                converted_line = self._convert_using_line(line)
-                converted_lines.append(converted_line)
-                i += 1
-                continue
-            
-            # 处理namespace（转换为package）
-            if line.strip().startswith('namespace '):
-                converted_line = self._convert_namespace_line(line, package_name)
-                converted_lines.append(converted_line)
-                i += 1
-                continue
-            
-            # 移除business interface相关的内容
-            if 'business' in line.lower() and 'interface' in line.lower():
-                # 跳过或转换包含business interface的行
-                line = re.sub(r'\bbusiness\s+', '', line, flags=re.IGNORECASE)
-                line = re.sub(r'\bBusiness\s+', '', line)
-            
-            # 其他行：转换类型引用
-            converted_line = self._convert_types_in_line(line)
-            converted_lines.append(converted_line)
+            # 其他行：跳过（如属性、using等已经被处理）
             i += 1
         
         # 清理多余的空行
         result = '\n'.join(converted_lines)
         result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
         
-        return result
+        return result.strip()
 
     def _is_comment_line(self, line: str) -> bool:
         """判断是否为注释行"""
@@ -289,43 +306,74 @@ class CSharpToJavaConverter:
                 stripped.startswith('///'))
 
     def _convert_comment_format(self, line: str) -> str:
-        """转换注释格式为Java格式"""
+        """转换注释格式为Java格式，移除XML标签"""
         stripped = line.strip()
         
         # 处理XML注释 /// 转换为 JavaDoc /** */
         if stripped.startswith('///'):
             # 移除///前缀
             content = stripped[3:].strip()
+            
             if not content:
-                return '     *'
+                return ''
             
-            # 检查是否是总结标签
-            if content.startswith('<summary>'):
-                content = content.replace('<summary>', '').replace('</summary>', '')
-                return f'    /**\n     * {content}\n     */'
+            # 移除XML标签，只保留文本内容
+            # 移除 <summary> </summary>
+            content = re.sub(r'</?summary>', '', content)
+            # 移除 <param name="xxx"> </param>
+            content = re.sub(r'<param\s+name="[^"]+">', '', content)
+            content = re.sub(r'</param>', '', content)
+            # 移除 <returns> </returns>
+            content = re.sub(r'</?returns>', '', content)
+            # 移除其他XML标签
+            content = re.sub(r'<[^>]+>', '', content)
             
-            # 检查是否是参数标签
-            param_match = re.search(r'<param name="(\w+)">(.*?)</param>', content)
-            if param_match:
-                param_name, param_desc = param_match.groups()
-                return f'     * @param {param_name} {param_desc}'
+            # 如果是参数或返回值注释，转换为JavaDoc格式
+            if '<param' in stripped:
+                # 提取参数名和描述
+                param_match = re.search(r'<param\s+name="(\w+)">(.*?)</param>', stripped, re.DOTALL)
+                if param_match:
+                    param_name, param_desc = param_match.groups()
+                    param_desc = re.sub(r'<[^>]+>', '', param_desc).strip()
+                    return f'     * @param {param_name} {param_desc}'
             
-            # 检查是否是返回值标签
-            if content.startswith('<returns>'):
-                content = content.replace('<returns>', '').replace('</returns>', '')
+            if '<returns>' in stripped:
                 return f'     * @return {content}'
             
-            # 普通XML注释转换为JavaDoc
-            return f'    /**\n     * {content}\n     */'
+            # 普通注释
+            if content:
+                # 检查是否是单行注释
+                if '\n' not in content and len(content) < 80:
+                    return f'    /**\n     * {content}\n     */'
+                else:
+                    # 多行注释
+                    lines = content.split('\n')
+                    result = ['    /**']
+                    for cline in lines:
+                        if cline.strip():
+                            result.append(f'     * {cline.strip()}')
+                        else:
+                            result.append('     *')
+                    result.append('     */')
+                    return '\n'.join(result)
+            else:
+                return '    /**\n     */'
         
         # 处理单行注释 //
         elif stripped.startswith('//') and not stripped.startswith('///'):
             content = stripped[2:].strip()
-            return f'    // {content}'
+            if content:
+                return f'    // {content}'
+            else:
+                return '    //'
         
         # 处理多行注释开始 /*
         elif stripped.startswith('/*'):
-            return line
+            # 转换 /* 为 JavaDoc格式
+            if stripped.startswith('/**'):
+                return line
+            else:
+                return line.replace('/*', '/**')
         
         # 处理多行注释中间 *
         elif stripped.startswith('*'):
@@ -333,17 +381,14 @@ class CSharpToJavaConverter:
         
         return line
 
-    def _convert_interface_line(self, line: str) -> Tuple[str, Optional[str]]:
+    def _convert_interface_line(self, line: str) -> str:
         """
         转换接口声明行，去掉I前缀，添加Service后缀
-        
-        Returns:
-            Tuple[str, Optional[str]]: (转换后的行, 新的接口名)
         """
         # 提取接口名
         match = re.search(r'\binterface\s+(\w+)', line)
         if not match:
-            return line, None
+            return line
         
         old_name = match.group(1)
         
@@ -374,7 +419,11 @@ class CSharpToJavaConverter:
         # 移除partial关键字
         line = re.sub(r'\bpartial\s+', '', line)
         
-        return line.rstrip(), new_name
+        # 确保以{结尾
+        if not line.strip().endswith('{'):
+            line = line.rstrip() + ' {'
+        
+        return line.rstrip()
 
     def _convert_method_line(self, line: str) -> str:
         """转换方法声明行"""
@@ -403,6 +452,10 @@ class CSharpToJavaConverter:
         
         # 处理泛型约束
         line = re.sub(r'\bwhere\s+\w+\s*:.*$', '', line)
+        
+        # 添加4个空格缩进
+        if not line.startswith('    '):
+            line = '    ' + line.lstrip()
         
         return line.rstrip()
 
@@ -437,54 +490,6 @@ class CSharpToJavaConverter:
                     f'    void remove{event_name.capitalize()}Listener({event_type} listener);')
         return line
 
-    def _convert_using_line(self, line: str) -> str:
-        """转换using语句为import语句"""
-        match = re.search(r'using\s+([\w.]+);', line)
-        if match:
-            namespace = match.group(1)
-            
-            # C#命名空间到Java包的映射
-            namespace_mappings = {
-                'System': 'java.lang',
-                'System.Collections.Generic': 'java.util',
-                'System.Collections': 'java.util',
-                'System.Threading.Tasks': 'java.util.concurrent',
-                'System.IO': 'java.io',
-                'System.Linq': 'java.util.stream',
-            }
-            
-            for cs_ns, java_pkg in namespace_mappings.items():
-                if namespace.startswith(cs_ns):
-                    remaining = namespace[len(cs_ns):].strip('.')
-                    if remaining:
-                        return f'import {java_pkg}.{remaining};'
-                    else:
-                        return f'import {java_pkg}.*;'
-            
-            # 如果没有匹配，添加注释
-            return f'// TODO: 需要手动转换 - {line.strip()}'
-        
-        return f'// {line.strip()}'
-
-    def _convert_namespace_line(self, line: str, package_name: str = None) -> str:
-        """转换namespace为package，移除business"""
-        if package_name:
-            # 如果包名包含business，移除它
-            package_name = re.sub(r'\bbusiness\.', '', package_name, flags=re.IGNORECASE)
-            package_name = re.sub(r'\.business', '', package_name, flags=re.IGNORECASE)
-            return f'package {package_name};'
-        
-        match = re.search(r'namespace\s+([\w.]+)', line)
-        if match:
-            namespace = match.group(1)
-            # 将命名空间转换为小写包名，并移除business
-            namespace = re.sub(r'\bbusiness\.', '', namespace, flags=re.IGNORECASE)
-            namespace = re.sub(r'\.business', '', namespace, flags=re.IGNORECASE)
-            package = namespace.lower()
-            return f'package {package};'
-        
-        return '// ' + line.strip()
-
     def _convert_parameter_types(self, line: str) -> str:
         """转换参数中的类型"""
         def replace_param_type(match):
@@ -510,11 +515,6 @@ class CSharpToJavaConverter:
         
         return line
 
-    def _clean_braces(self, code: str) -> str:
-        """清理多余的大括号"""
-        code = re.sub(r'\}\s*$', '', code.strip())
-        return code
-
     def _print_stats(self):
         """打印转换统计信息"""
         print("-" * 60)
@@ -528,14 +528,16 @@ class CSharpToJavaConverter:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description='C#接口转Java接口工具 - 注释转换、接口重命名（去掉I前缀，添加Service后缀）',
+        description='C#接口转Java接口工具 - 注释转换、接口重命名、删除using和package',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 转换规则:
-  1. 注释转换: /// <summary> -> /** */, <param> -> @param, <returns> -> @return
-  2. 接口重命名: IUserRepository -> UserRepositoryService (去掉I前缀，添加Service后缀)
-  3. 包名处理: 自动移除namespace中的business关键字
-  4. 类型映射: C#类型自动转换为Java类型
+  1. 文件名转换: IUserRepository.cs -> UserRepositoryService.java
+  2. 删除所有using语句
+  3. 删除namespace和package语句
+  4. 注释转换: 删除XML标签(</summary>等)，转换为JavaDoc格式
+  5. 接口重命名: IUserRepository -> UserRepositoryService
+  6. 类型映射: C#类型自动转换为Java类型
 
 使用示例:
   # 转换单个文件
@@ -547,11 +549,8 @@ def main():
   # 转换整个文件夹
   python cs_to_java_interface.py -i ./CSharpInterfaces -o ./JavaInterfaces
   
-  # 递归转换所有子文件夹中的接口
+  # 递归转换所有子文件夹
   python cs_to_java_interface.py -i ./Project -o ./JavaProject --recursive
-  
-  # 指定包名（会自动移除business）
-  python cs_to_java_interface.py -i IUserRepository.cs --package com.example.service
         """
     )
     
@@ -559,8 +558,6 @@ def main():
                        help='输入文件或文件夹路径')
     parser.add_argument('-o', '--output',
                        help='输出文件或文件夹路径（可选）')
-    parser.add_argument('-p', '--package',
-                       help='指定Java包名（可选，会覆盖原有的namespace）')
     parser.add_argument('-r', '--recursive', action='store_true',
                        help='递归处理子文件夹')
     parser.add_argument('--pattern', default='*.cs',
@@ -578,15 +575,14 @@ def main():
         # 转换单个文件
         print(f"开始转换单个文件: {args.input}")
         print("-" * 60)
-        converter.convert_file(args.input, args.output, args.package)
+        converter.convert_file(args.input, args.output)
         
     elif input_path.is_dir():
         # 转换文件夹
         print(f"开始转换文件夹: {args.input}")
         print("-" * 60)
         converter.convert_folder(args.input, args.output, 
-                                 args.pattern, args.recursive, 
-                                 args.package)
+                                 args.pattern, args.recursive)
     else:
         print(f"错误：输入路径不存在 - {args.input}")
         sys.exit(1)
