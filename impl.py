@@ -17,25 +17,31 @@ def convert_csharp_to_java(csharp_code, class_name):
     java_code = '\n'.join(filtered_lines)
     
     # 2. 去掉namespace包装，但保留里面的内容
-    # 匹配 namespace xxx { 内容 }
-    namespace_pattern = r'^\s*namespace\s+[\w\.]+\s*\{(.*?)\n\s*\}[ \t]*$'
+    # 匹配从namespace开始到最后一个}结束
+    namespace_pattern = r'^\s*namespace\s+[\w\.]+\s*\{(.*)\n\s*\}[ \t]*$'
     match = re.search(namespace_pattern, java_code, re.DOTALL | re.MULTILINE)
     if match:
-        # 只保留namespace内部的内容
         java_code = match.group(1)
     
     # 3. 删除#region和#endregion
     java_code = re.sub(r'^\s*#region.*$\n', '', java_code, flags=re.MULTILINE)
     java_code = re.sub(r'^\s*#endregion.*$\n', '', java_code, flags=re.MULTILINE)
     
-    # 4. 转换XML注释 /// 为 /** */
+    # 4. 转换XML注释并删除XML标签
     def convert_xml_comment(match):
         comment_lines = match.group(0).split('\n')
         result = ['/**']
         for line in comment_lines:
             # 去除 /// 前缀
             cleaned = re.sub(r'^\s*///\s?', '', line)
-            if cleaned.strip():
+            # 删除XML标签
+            cleaned = re.sub(r'</?(summary|param|returns|exception|see|c|code|list|item|term|description|example|remarks?)\s*/?>', '', cleaned)
+            # 删除XML属性
+            cleaned = re.sub(r'\s+\w+="[^"]*"', '', cleaned)
+            # 清理多余的空白
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            
+            if cleaned:
                 result.append(f' * {cleaned}')
             else:
                 result.append(' *')
@@ -45,14 +51,15 @@ def convert_csharp_to_java(csharp_code, class_name):
     # 查找连续的///注释块
     java_code = re.sub(r'(?m)^\s*///[^\n]*\n(\s*///[^\n]*\n)*', convert_xml_comment, java_code)
     
-    # 5. 转换方法名（首字母小写）
+    # 5. 转换方法名（首字母小写）- 修复参数括号问题
     def convert_method_signature(match):
         indent = match.group(1)
         modifier = match.group(2)
         return_type = match.group(3)
         method_name = match.group(4)
-        params = match.group(5)
-        rest = match.group(6)
+        params = match.group(5)  # 这部分已经包含了括号内的参数
+        # 检查后面是否有方法体开始的花括号
+        rest = match.group(6) if len(match.groups()) > 5 else ''
         
         # 如果是构造函数（方法名和类名相同），不转换
         if method_name == class_name:
@@ -61,15 +68,15 @@ def convert_csharp_to_java(csharp_code, class_name):
         # 方法名首字母小写
         if method_name and len(method_name) > 0:
             java_method_name = method_name[0].lower() + method_name[1:]
-            return f'{indent}{modifier} {return_type} {java_method_name}{params}{rest}'
+            # 保持参数括号完整
+            return f'{indent}{modifier} {return_type} {java_method_name}({params}){rest}'
         return match.group(0)
     
-    # 匹配方法声明
-    method_pattern = r'(\s*)(public|private|protected|internal)\s+([\w<>\[\]]+)\s+([A-Z]\w*)\s*\(([^)]*)\)(\s*\{)'
+    # 匹配方法声明 - 改进正则表达式以正确捕获参数括号
+    method_pattern = r'(\s*)(public|private|protected|internal)\s+([\w<>\[\]]+)\s+([A-Z]\w*)\s*\(([^)]*)\)(\s*\{?)'
     java_code = re.sub(method_pattern, convert_method_signature, java_code)
     
-    # 6. 转换属性为字段（去掉get;set;）
-    # public string Name { get; set; } -> public String Name;
+    # 6. 转换属性为字段
     property_pattern = r'(\s*)(public|private|protected|internal)\s+(\w+)\s+([A-Z]\w*)\s*\{\s*get;\s*set;\s*\}'
     def convert_property(match):
         indent = match.group(1)
@@ -92,10 +99,22 @@ def convert_csharp_to_java(csharp_code, class_name):
     java_code = re.sub(r'\bbool\b', 'boolean', java_code)
     java_code = re.sub(r'\bobject\b', 'Object', java_code)
     
-    # 8. 处理类名（确保文件名和类名对应）
-    # 如果类名不是以Impl结尾，添加Impl
+    # 8. 确保类有完整的括号匹配
+    def ensure_braces(code):
+        # 统计花括号数量
+        open_braces = code.count('{')
+        close_braces = code.count('}')
+        
+        # 如果缺少结尾花括号，添加
+        if open_braces > close_braces:
+            missing = open_braces - close_braces
+            code += '\n' + '}' * missing
+        return code
+    
+    java_code = ensure_braces(java_code)
+    
+    # 9. 处理类名
     if not class_name.endswith('Impl'):
-        # 查找类声明并修改类名
         class_pattern = r'(\s*)(public|private|protected|internal)?\s*class\s+(\w+)'
         def rename_class(match):
             indent = match.group(1)
@@ -104,6 +123,22 @@ def convert_csharp_to_java(csharp_code, class_name):
             new_class_name = old_class_name + 'Impl'
             return f'{indent}{modifier} class {new_class_name}'
         java_code = re.sub(class_pattern, rename_class, java_code, count=1)
+    
+    # 10. 清理多余的空白行
+    java_code = re.sub(r'\n\s*\n\s*\n', '\n\n', java_code)
+    
+    # 11. 确保每个方法都有完整的方法体
+    # 如果方法声明后面没有花括号，添加空方法体
+    method_without_body = r'(\s*)(public|private|protected)\s+(\w+)\s+(\w+)\(([^)]*)\)\s*;'
+    def add_empty_body(match):
+        indent = match.group(1)
+        modifier = match.group(2)
+        return_type = match.group(3)
+        method_name = match.group(4)
+        params = match.group(5)
+        return f'{indent}{modifier} {return_type} {method_name}({params}) {{\n{indent}    // TODO: 实现该方法\n{indent}}}'
+    
+    java_code = re.sub(method_without_body, add_empty_body, java_code)
     
     return java_code
 
@@ -143,7 +178,7 @@ def process_folder(input_folder, output_folder=None):
             # 转换为Java
             java_code = convert_csharp_to_java(csharp_code, original_class_name)
             
-            # 确定新的类名（ServiceImpl）
+            # 确定新的类名
             if original_class_name.endswith('Impl'):
                 new_class_name = original_class_name
             else:
@@ -157,8 +192,21 @@ def process_folder(input_folder, output_folder=None):
             with open(java_file_path, 'w', encoding='utf-8') as f:
                 f.write(java_code)
             
-            # 检查是否为空
-            if len(java_code.strip()) == 0:
+            # 检查转换质量
+            open_count = java_code.count('{')
+            close_count = java_code.count('}')
+            param_count = java_code.count('(')
+            param_close_count = java_code.count(')')
+            
+            issues = []
+            if open_count != close_count:
+                issues.append(f"括号不匹配 (开:{open_count}, 闭:{close_count})")
+            if param_count != param_close_count:
+                issues.append(f"参数括号不匹配 (开:{param_count}, 闭:{param_close_count})")
+            
+            if issues:
+                print(f"⚠ 警告: {base_name} - {', '.join(issues)}")
+            elif len(java_code.strip()) == 0:
                 print(f"⚠ 警告: {base_name} 转换后为空")
             else:
                 print(f"✓ 转换成功: {base_name} -> {java_file_name}")
@@ -166,8 +214,6 @@ def process_folder(input_folder, output_folder=None):
         except Exception as e:
             print(f"✗ 转换失败: {cs_file}")
             print(f"  错误: {str(e)}")
-            import traceback
-            traceback.print_exc()
     
     print(f"\n转换完成！输出目录: {output_folder}")
 
