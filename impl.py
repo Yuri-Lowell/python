@@ -83,33 +83,25 @@ def convert_xml_comments(code):
     
     return '\n'.join(result)
 
-def find_matching_brace(code, start_pos):
-    """找到匹配的括号位置"""
-    brace_count = 0
-    for i in range(start_pos, len(code)):
-        if code[i] == '{':
-            brace_count += 1
-        elif code[i] == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                return i
-    return -1
-
-def convert_methods(code):
-    """转换方法名和签名，正确处理括号"""
+def convert_methods(code, class_name):
+    """转换方法名和签名，添加@Override注解"""
     lines = code.split('\n')
     result = []
     i = 0
     
+    # 获取接口名（用于判断哪些方法需要@Override）
+    interface_match = re.search(r'implements\s+(\w+)', code)
+    interface_name = interface_match.group(1) if interface_match else None
+    
     while i < len(lines):
         line = lines[i]
         
-        # 检查是否是方法声明（不以注释或空格开头）
+        # 检查是否是方法声明
         stripped = line.strip()
-        if (stripped and not stripped.startswith('//') and not stripped.startswith('*') and 
-            re.match(r'^(public|private|protected|internal)\s+', stripped)):
+        if (stripped and not stripped.startswith('//') and not stripped.startswith('*') and not stripped.startswith('@') and
+            re.match(r'^(public|private|protected)\s+', stripped) and '(' in stripped):
             
-            # 收集完整的方法声明（可能跨多行）
+            # 收集完整的方法声明
             method_lines = [line]
             j = i + 1
             
@@ -126,7 +118,7 @@ def convert_methods(code):
             method_text = '\n'.join(method_lines)
             
             # 解析方法
-            method_match = re.match(r'(\s*)(public|private|protected|internal)\s+([\w<>\[\]]+)\s+([A-Za-z_]\w*)\s*\(', method_text)
+            method_match = re.match(r'(\s*)(public|private|protected)\s+([\w<>\[\]]+)\s+([A-Za-z_]\w*)\s*\(', method_text)
             if method_match:
                 indent = method_match.group(1)
                 modifier = method_match.group(2)
@@ -154,13 +146,28 @@ def convert_methods(code):
                         rest = method_text[paren_end + 1:]
                         
                         # 转换方法名（首字母小写）
-                        if method_name not in ['equals', 'hashCode', 'toString']:
-                            new_method_name = method_name[0].lower() + method_name[1:] if method_name else method_name
+                        if method_name and len(method_name) > 0:
+                            new_method_name = method_name[0].lower() + method_name[1:] if method_name[0].isupper() else method_name
                         else:
                             new_method_name = method_name
                         
-                        # 重新构建方法
+                        # 构建方法
                         new_method = f'{indent}{modifier} {return_type} {new_method_name}({params}){rest}'
+                        
+                        # 检查是否需要添加@Override（public方法且不是构造函数）
+                        if (modifier == 'public' and 
+                            new_method_name != class_name and 
+                            new_method_name != class_name.replace('ServiceImpl', '') and
+                            'static' not in method_text and
+                            'final' not in method_text):
+                            # 在方法前添加@Override
+                            if result and result[-1].strip().endswith('*/'):
+                                # 如果上一行是注释结束，在注释后添加
+                                result.append(f'{indent}@Override')
+                            else:
+                                # 否则直接添加
+                                result.append(f'{indent}@Override')
+                        
                         result.append(new_method)
                         i = j
                         continue
@@ -191,11 +198,11 @@ def convert_csharp_to_java(csharp_code, class_name):
     # 4. 转换XML注释
     java_code = convert_xml_comments(java_code)
     
-    # 5. 转换方法名
-    java_code = convert_methods(java_code)
+    # 5. 转换方法名和添加@Override
+    java_code = convert_methods(java_code, class_name)
     
     # 6. 转换属性为字段
-    property_pattern = r'(\s*)(public|private|protected|internal)\s+(\w+)\s+([A-Z]\w*)\s*\{\s*get;\s*set;\s*\}'
+    property_pattern = r'(\s*)(public|private|protected)\s+(\w+)\s+([A-Z]\w*)\s*\{\s*get;\s*set;\s*\}'
     def convert_property(match):
         indent = match.group(1)
         modifier = match.group(2)
@@ -225,7 +232,7 @@ def convert_csharp_to_java(csharp_code, class_name):
         interface_name = match.group(1)
         java_code = re.sub(r'\s*:\s*\w+', '', java_code)
     
-    # 9. 修改类名
+    # 9. 修改类名并添加@Service注解
     def rename_class(match):
         indent = match.group(1)
         modifier = match.group(2) if match.group(2) else 'public'
@@ -239,15 +246,47 @@ def convert_csharp_to_java(csharp_code, class_name):
         
         new_class_name = f'{base_name}ServiceImpl'
         
+        # 构建类声明
+        class_declaration = f'{indent}{modifier} class {new_class_name}'
         if interface_name:
-            return f'{indent}{modifier} class {new_class_name} implements {interface_name}'
-        else:
-            return f'{indent}{modifier} class {new_class_name}'
+            class_declaration += f' implements {interface_name}'
+        
+        # 在类声明前添加@Service注解
+        service_annotation = f'{indent}@Service'
+        return f'{service_annotation}\n{class_declaration}'
     
-    class_pattern = r'(\s*)(public|private|protected|internal)?\s*class\s+(\w+)'
+    class_pattern = r'(\s*)(public|private|protected)?\s*class\s+(\w+)'
     java_code = re.sub(class_pattern, rename_class, java_code, count=1)
     
-    # 10. 确保括号匹配
+    # 10. 添加必要的imports
+    imports = set()
+    
+    # 检查是否需要导入Service注解
+    if '@Service' in java_code:
+        imports.add('import org.springframework.stereotype.Service;')
+    
+    # 检查是否需要导入Override注解
+    if '@Override' in java_code:
+        imports.add('import java.lang.Override;')
+    
+    # 检查使用的类型
+    if 'LocalDateTime' in java_code:
+        imports.add('import java.time.LocalDateTime;')
+    if 'List' in java_code:
+        imports.add('import java.util.List;')
+    if 'ArrayList' in java_code:
+        imports.add('import java.util.ArrayList;')
+    if 'Map' in java_code:
+        imports.add('import java.util.Map;')
+    if 'HashMap' in java_code:
+        imports.add('import java.util.HashMap;')
+    
+    # 在文件开头添加imports
+    if imports:
+        import_section = '\n'.join(sorted(imports)) + '\n\n'
+        java_code = import_section + java_code
+    
+    # 11. 确保括号匹配
     def ensure_braces(code):
         open_braces = code.count('{')
         close_braces = code.count('}')
@@ -259,7 +298,7 @@ def convert_csharp_to_java(csharp_code, class_name):
     
     java_code = ensure_braces(java_code)
     
-    # 11. 清理多余空行
+    # 12. 清理多余空行
     java_code = re.sub(r'\n\s*\n\s*\n', '\n\n', java_code)
     
     return java_code
