@@ -67,10 +67,7 @@ def convert_xml_comments(code):
                 javadoc.append(f' * @param {param_name} {param_desc}')
             
             if returns:
-                if params:
-                    javadoc.append(f' * @return {returns}')
-                else:
-                    javadoc.append(f' * @return {returns}')
+                javadoc.append(f' * @return {returns}')
             
             if len(javadoc) == 1:
                 javadoc.append(' *')
@@ -83,29 +80,38 @@ def convert_xml_comments(code):
     
     return '\n'.join(result)
 
-def convert_methods(code, class_name):
-    """转换方法名和签名，添加@Override注解"""
+def convert_methods_and_add_override(code, class_name):
+    """转换方法名首字母小写并添加@Override注解"""
     lines = code.split('\n')
     result = []
     i = 0
     
-    # 获取接口名（用于判断哪些方法需要@Override）
-    interface_match = re.search(r'implements\s+(\w+)', code)
-    interface_name = interface_match.group(1) if interface_match else None
-    
     while i < len(lines):
         line = lines[i]
         
-        # 检查是否是方法声明
+        # 检查是否是public/private/protected方法声明
         stripped = line.strip()
-        if (stripped and not stripped.startswith('//') and not stripped.startswith('*') and not stripped.startswith('@') and
-            re.match(r'^(public|private|protected)\s+', stripped) and '(' in stripped):
+        
+        # 匹配方法声明的正则
+        method_pattern = r'^\s*(public|private|protected)\s+([\w<>\[\]]+)\s+([A-Z]\w*)\s*\('
+        method_match = re.match(method_pattern, line)
+        
+        if method_match and not stripped.startswith('//') and not stripped.startswith('*'):
+            # 获取基本信息
+            indent = method_match.group(1)  # 这里实际获取的是修饰符，需要重新获取缩进
+            # 重新获取缩进
+            indent_match = re.match(r'(\s*)', line)
+            indent = indent_match.group(1) if indent_match else ''
             
-            # 收集完整的方法声明
+            modifier = method_match.group(1)
+            return_type = method_match.group(2)
+            method_name = method_match.group(3)
+            
+            # 收集完整的方法声明（可能跨多行）
             method_lines = [line]
             j = i + 1
             
-            # 计算括号匹配
+            # 计算括号匹配，找到方法体的开始
             paren_count = line.count('(') - line.count(')')
             brace_count = line.count('{') - line.count('}')
             
@@ -117,66 +123,58 @@ def convert_methods(code, class_name):
             
             method_text = '\n'.join(method_lines)
             
-            # 解析方法
-            method_match = re.match(r'(\s*)(public|private|protected)\s+([\w<>\[\]]+)\s+([A-Za-z_]\w*)\s*\(', method_text)
-            if method_match:
-                indent = method_match.group(1)
-                modifier = method_match.group(2)
-                return_type = method_match.group(3)
-                method_name = method_match.group(4)
-                
-                # 找到参数括号
-                paren_start = method_text.find('(', method_match.end())
-                if paren_start != -1:
-                    # 找到匹配的结束括号
-                    brace_count = 0
-                    paren_end = -1
-                    for k in range(paren_start + 1, len(method_text)):
-                        if method_text[k] == '(':
-                            brace_count += 1
-                        elif method_text[k] == ')':
-                            if brace_count == 0:
-                                paren_end = k
-                                break
-                            else:
-                                brace_count -= 1
-                    
-                    if paren_end != -1:
-                        params = method_text[paren_start + 1:paren_end]
-                        rest = method_text[paren_end + 1:]
-                        
-                        # 转换方法名（首字母小写）
-                        if method_name and len(method_name) > 0:
-                            new_method_name = method_name[0].lower() + method_name[1:] if method_name[0].isupper() else method_name
+            # 找到参数括号的位置
+            paren_start = method_text.find('(')
+            if paren_start != -1:
+                # 找到匹配的结束括号
+                paren_count_temp = 0
+                paren_end = -1
+                for k in range(paren_start + 1, len(method_text)):
+                    if method_text[k] == '(':
+                        paren_count_temp += 1
+                    elif method_text[k] == ')':
+                        if paren_count_temp == 0:
+                            paren_end = k
+                            break
                         else:
-                            new_method_name = method_name
-                        
-                        # 构建方法
-                        new_method = f'{indent}{modifier} {return_type} {new_method_name}({params}){rest}'
-                        
-                        # 检查是否需要添加@Override（public方法且不是构造函数）
-                        if (modifier == 'public' and 
-                            new_method_name != class_name and 
-                            new_method_name != class_name.replace('ServiceImpl', '') and
-                            'static' not in method_text and
-                            'final' not in method_text):
-                            # 在方法前添加@Override
-                            if result and result[-1].strip().endswith('*/'):
-                                # 如果上一行是注释结束，在注释后添加
-                                result.append(f'{indent}@Override')
-                            else:
-                                # 否则直接添加
-                                result.append(f'{indent}@Override')
-                        
-                        result.append(new_method)
-                        i = j
-                        continue
-            
-            result.append(line)
-            i += 1
-        else:
-            result.append(line)
-            i += 1
+                            paren_count_temp -= 1
+                
+                if paren_end != -1:
+                    params = method_text[paren_start + 1:paren_end]
+                    rest = method_text[paren_end + 1:]
+                    
+                    # 转换方法名为首字母小写
+                    new_method_name = method_name[0].lower() + method_name[1:] if method_name else method_name
+                    
+                    # 重新构建方法声明
+                    new_method_declaration = f'{indent}{modifier} {return_type} {new_method_name}({params})'
+                    
+                    # 检查是否需要添加@Override
+                    # 条件：public方法，不是构造函数，不是static，不是private
+                    is_constructor = (new_method_name == class_name or 
+                                     new_method_name == class_name.replace('ServiceImpl', '') or
+                                     new_method_name == class_name.replace('Impl', ''))
+                    
+                    if (modifier == 'public' and 
+                        not is_constructor and
+                        'static' not in method_text and
+                        'final' not in method_text):
+                        # 检查前面是否有注释
+                        if result and result[-1].strip().endswith('*/'):
+                            # 如果上一行是注释结束，在注释后添加@Override
+                            result.append(f'{indent}@Override')
+                        elif len(result) > 1 and result[-2].strip().endswith('*/'):
+                            result.append(f'{indent}@Override')
+                        else:
+                            result.append(f'{indent}@Override')
+                    
+                    # 添加方法体
+                    result.append(new_method_declaration + rest)
+                    i = j
+                    continue
+        
+        result.append(line)
+        i += 1
     
     return '\n'.join(result)
 
@@ -198,10 +196,7 @@ def convert_csharp_to_java(csharp_code, class_name):
     # 4. 转换XML注释
     java_code = convert_xml_comments(java_code)
     
-    # 5. 转换方法名和添加@Override
-    java_code = convert_methods(java_code, class_name)
-    
-    # 6. 转换属性为字段
+    # 5. 转换属性为字段
     property_pattern = r'(\s*)(public|private|protected)\s+(\w+)\s+([A-Z]\w*)\s*\{\s*get;\s*set;\s*\}'
     def convert_property(match):
         indent = match.group(1)
@@ -218,19 +213,24 @@ def convert_csharp_to_java(csharp_code, class_name):
     
     java_code = re.sub(property_pattern, convert_property, java_code)
     
-    # 7. 转换类型
+    # 6. 转换类型
     java_code = re.sub(r'\bstring\b', 'String', java_code)
     java_code = re.sub(r'\bbool\b', 'boolean', java_code)
     java_code = re.sub(r'\bobject\b', 'Object', java_code)
     java_code = re.sub(r'\bDateTime\b', 'LocalDateTime', java_code)
     
-    # 8. 提取接口名
+    # 7. 提取接口名
     interface_name = None
     extends_pattern = r'class\s+\w+\s*:\s*(\w+)'
     match = re.search(extends_pattern, java_code)
     if match:
         interface_name = match.group(1)
         java_code = re.sub(r'\s*:\s*\w+', '', java_code)
+    
+    # 8. 先转换方法名和添加@Override（在类名修改之前）
+    # 获取基础类名（去掉可能的Impl后缀）
+    base_class_name = class_name.replace('Impl', '').replace('Service', '')
+    java_code = convert_methods_and_add_override(java_code, base_class_name)
     
     # 9. 修改类名并添加@Service注解
     def rename_class(match):
@@ -261,15 +261,12 @@ def convert_csharp_to_java(csharp_code, class_name):
     # 10. 添加必要的imports
     imports = set()
     
-    # 检查是否需要导入Service注解
     if '@Service' in java_code:
         imports.add('import org.springframework.stereotype.Service;')
     
-    # 检查是否需要导入Override注解
     if '@Override' in java_code:
         imports.add('import java.lang.Override;')
     
-    # 检查使用的类型
     if 'LocalDateTime' in java_code:
         imports.add('import java.time.LocalDateTime;')
     if 'List' in java_code:
@@ -281,22 +278,15 @@ def convert_csharp_to_java(csharp_code, class_name):
     if 'HashMap' in java_code:
         imports.add('import java.util.HashMap;')
     
-    # 在文件开头添加imports
     if imports:
         import_section = '\n'.join(sorted(imports)) + '\n\n'
         java_code = import_section + java_code
     
     # 11. 确保括号匹配
-    def ensure_braces(code):
-        open_braces = code.count('{')
-        close_braces = code.count('}')
-        
-        if open_braces > close_braces:
-            missing = open_braces - close_braces
-            code += '\n' + '}' * missing
-        return code
-    
-    java_code = ensure_braces(java_code)
+    open_braces = java_code.count('{')
+    close_braces = java_code.count('}')
+    if open_braces > close_braces:
+        java_code += '\n' + '}' * (open_braces - close_braces)
     
     # 12. 清理多余空行
     java_code = re.sub(r'\n\s*\n\s*\n', '\n\n', java_code)
@@ -351,18 +341,22 @@ def process_folder(input_folder, output_folder=None):
             param_count = java_code.count('(')
             param_close_count = java_code.count(')')
             
-            if open_count != close_count:
-                print(f"⚠ 警告: {base_name} - 括号不匹配 (开:{open_count}, 闭:{close_count})")
-            elif param_count != param_close_count:
-                print(f"⚠ 警告: {base_name} - 参数括号不匹配 (开:{param_count}, 闭:{param_close_count})")
-            elif len(java_code.strip()) == 0:
-                print(f"⚠ 警告: {base_name} 转换后为空")
-            else:
-                print(f"✓ 转换成功: {base_name} -> {java_file_name}")
+            # 检查是否有@Override注解
+            has_override = '@Override' in java_code
+            # 检查方法名是否首字母小写
+            method_names = re.findall(r'public\s+[\w<>\[\]]+\s+([a-z]\w*)\s*\(', java_code)
+            
+            print(f"✓ 转换成功: {base_name} -> {java_file_name}")
+            if not has_override:
+                print(f"  ⚠ 注意: 没有检测到@Override注解")
+            if not method_names:
+                print(f"  ⚠ 注意: 没有检测到转换后的方法")
             
         except Exception as e:
             print(f"✗ 转换失败: {cs_file}")
             print(f"  错误: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     print(f"\n转换完成！输出目录: {output_folder}")
 
