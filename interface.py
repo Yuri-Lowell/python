@@ -69,10 +69,6 @@ class CSharpToJavaConverter:
         去掉类名的I前缀
         例如: IUserRepository -> UserRepository, IUser -> User
         """
-        if not class_name:
-            return class_name
-        
-        # 如果以I开头且第二个字母是大写，去掉I
         if class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper():
             return class_name[1:]
         return class_name
@@ -92,9 +88,6 @@ class CSharpToJavaConverter:
         1. 先检查类型映射（如string -> String）
         2. 然后去掉I前缀（如IUser -> User）
         """
-        if not type_name:
-            return type_name
-        
         # 先处理类型映射
         if type_name in self.type_mappings:
             return self.type_mappings[type_name]
@@ -263,7 +256,7 @@ class CSharpToJavaConverter:
                     continue
                 
                 # 转换方法声明
-                if re.search(r'\w+\s+\w+\s*\(', line) and '{' not in line and not line.strip().startswith('//'):
+                if re.search(r'\w+\s+\w+\s*\([^)]*\)', line) and '{' not in line and not line.strip().startswith('//'):
                     converted_line = self._convert_method_line(line)
                     converted_lines.append(converted_line)
                 # 转换属性
@@ -410,7 +403,7 @@ class CSharpToJavaConverter:
         line = line.replace(old_name, new_name)
         
         # 处理泛型
-        line = re.sub(r'<([^<>]+)>', lambda m: f'<{self.convert_type(m.group(1))}>', line)
+        line = re.sub(r'<([^<>]+)>', r'<\1>', line)
         
         # 转换访问修饰符
         line = re.sub(r'\bpublic\s+', 'public ', line)
@@ -436,19 +429,15 @@ class CSharpToJavaConverter:
 
     def _convert_method_line(self, line: str) -> str:
         """转换方法声明行"""
-        # 更精确地匹配方法声明
-        # 匹配格式：返回类型 方法名(参数)
+        # 提取方法名和返回类型
         method_match = re.match(r'^(\s*)(\w+)\s+(\w+)\s*\((.*)\)\s*(\{.*)?$', line)
         if not method_match:
-            # 如果匹配失败，尝试更宽松的匹配
-            method_match = re.match(r'^(\s*)([\w<>]+)\s+(\w+)\s*\((.*)\)', line)
-            if not method_match:
-                return line
+            return line
         
-        indent, return_type, method_name, params, _ = method_match.groups() if len(method_match.groups()) >= 4 else (method_match.groups() + (None,))
+        indent, return_type, method_name, params, body = method_match.groups()
         
         # 转换返回类型
-        new_return_type = self.convert_type(return_type.strip())
+        new_return_type = self.convert_type(return_type)
         
         # 转换方法名为驼峰命名（首字母小写）
         new_method_name = self.to_camel_case(method_name)
@@ -462,7 +451,7 @@ class CSharpToJavaConverter:
         return new_line
 
     def _convert_parameters(self, params_str: str) -> str:
-        """转换参数列表，确保所有类型都正确转换"""
+        """转换参数列表"""
         if not params_str or not params_str.strip():
             return ""
         
@@ -473,11 +462,11 @@ class CSharpToJavaConverter:
         for part in param_parts:
             part = part.strip()
             if part:
-                # 匹配类型和参数名（支持泛型）
-                type_match = re.match(r'([\w<>]+)\s+(\w+)', part)
+                # 匹配类型和参数名
+                type_match = re.match(r'(\w+)\s+(\w+)', part)
                 if type_match:
                     param_type, param_name = type_match.groups()
-                    # 转换类型（先映射，再去掉I前缀）
+                    # 转换类型（去掉I前缀）
                     new_type = self.convert_type(param_type)
                     converted_params.append(f'{new_type} {param_name}')
                 else:
@@ -491,10 +480,10 @@ class CSharpToJavaConverter:
         match = re.search(r'(\w+)\s+(\w+)\s*\{\s*get;\s*set;\s*\}', line)
         if match:
             prop_type, prop_name = match.groups()
-            # 转换类型
+            # 转换类型（去掉I前缀）
             java_type = self.convert_type(prop_type)
             
-            # 生成getter和setter方法（方法名首字母小写）
+            # 生成getter和setter方法声明（方法名首字母小写）
             getter_name = self.to_camel_case(f'Get{prop_name}')
             setter_name = self.to_camel_case(f'Set{prop_name}')
             getter = f'    {java_type} {getter_name}();'
@@ -524,18 +513,18 @@ class CSharpToJavaConverter:
         return line
 
     def _convert_types_in_line(self, line: str) -> str:
-        """转换行中的所有类型引用"""
-        # 先转换基本类型
+        """转换行中的类型引用"""
+        # 转换所有类型（包括Entity类型）
+        def replace_type(match):
+            type_name = match.group(1)
+            return self.convert_type(type_name)
+        
+        # 匹配独立的类型名称
+        line = re.sub(r'\b([A-Z][a-zA-Z0-9]+)\b(?=\s+\w+|\s*[\[<]|\s*$)', replace_type, line)
+        
+        # 转换基本类型
         for cs_type, java_type in self.type_mappings.items():
             line = re.sub(rf'\b{cs_type}\b', java_type, line)
-        
-        # 转换Entity类型（去掉I前缀）
-        # 匹配以I开头后跟大写字母的单词
-        def replace_entity_type(match):
-            type_name = match.group(1)
-            return self.remove_i_prefix(type_name)
-        
-        line = re.sub(r'\b(I[A-Z][a-zA-Z0-9]*)\b', replace_entity_type, line)
         
         # 处理可空类型
         line = re.sub(r'(\w+)\?', lambda m: f'Optional<{self.convert_type(m.group(1))}>', line)
@@ -543,7 +532,6 @@ class CSharpToJavaConverter:
         # 处理泛型
         line = re.sub(r'List<([^>]+)>', lambda m: f'List<{self.convert_type(m.group(1))}>', line)
         line = re.sub(r'Dictionary<([^,]+),\s*([^>]+)>', lambda m: f'Map<{self.convert_type(m.group(1))}, {self.convert_type(m.group(2))}>', line)
-        line = re.sub(r'Task<([^>]+)>', lambda m: f'CompletableFuture<{self.convert_type(m.group(1))}>', line)
         
         return line
 
