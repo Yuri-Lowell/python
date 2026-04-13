@@ -884,3 +884,101 @@ public interface {mapper_name} {{
             print(f"  ❌ 转换失败: {input_file}")
             print(f"     错误: {str(e)}")
             import traceback
+            traceback.print_exc()
+            return False
+
+    def convert_folder(self, input_folder: str, output_dir: str = "./output",
+                      entity_name: str = None, table_name: str = None,
+                      recursive: bool = True, preserve_structure: bool = False):
+        """转换文件夹中的所有C# DAO文件"""
+        print(f"\n{'='*70}")
+        print(f"  C# LINQ to SQL -> Java MyBatis Mapper 转换工具")
+        print(f"{'='*70}")
+        print(f"输入路径: {input_folder}")
+        print(f"输出目录: {output_dir}")
+        print(f"{'='*70}\n")
+        
+        dao_files = self.find_dao_files(input_folder)
+        
+        if not dao_files:
+            print("❌ 未找到任何C# DAO文件")
+            return
+        
+        print(f"找到 {len(dao_files)} 个C# DAO文件\n")
+        
+        success_count = 0
+        fail_count = 0
+        base_path = input_folder if preserve_structure else None
+        
+        for i, dao_file in enumerate(dao_files, 1):
+            print(f"[{i}/{len(dao_files)}] 处理: {dao_file}")
+            
+            if self.convert_file(dao_file, output_dir, entity_name, table_name, 
+                               preserve_structure, base_path):
+                success_count += 1
+            else:
+                fail_count += 1
+            print()
+        
+        print(f"{'='*70}")
+        print(f"转换完成!")
+        print(f"成功: {success_count} 个文件")
+        print(f"失败: {fail_count} 个文件")
+        print(f"输出目录: {output_dir}")
+        print(f"{'='*70}\n")
+        
+        self.generate_summary_report(output_dir, success_count, fail_count)
+
+    def generate_summary_report(self, output_dir: str, success_count: int, fail_count: int):
+        """生成转换汇总报告"""
+        report_path = os.path.join(output_dir, "conversion_report.txt")
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("C# LINQ to SQL 转 Java MyBatis Mapper 转换报告\n")
+            f.write("="*60 + "\n")
+            f.write(f"转换时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"成功数量: {success_count}\n")
+            f.write(f"失败数量: {fail_count}\n")
+            f.write("="*60 + "\n\n")
+            f.write("生成的Java Mapper接口和XML文件位于:\n")
+            f.write(f"  Java文件: {os.path.join(output_dir, 'java')}\n")
+            f.write(f"  XML文件: {os.path.join(output_dir, 'xml')}\n")
+        
+        print(f"📄 转换报告已生成: {report_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='将C# LINQ DAO转换为Java MyBatis Mapper',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python linq_to_mybatis.py -i UserDAO.cs -o ./output
+  python linq_to_mybatis.py -i ./CSharpProject/DAL -o ./mybatis
+  python linq_to_mybatis.py -i ./CSharpProject -o ./mybatis -r -s
+        """
+    )
+    
+    parser.add_argument('-i', '--input', required=True, help='输入的C#文件或文件夹路径')
+    parser.add_argument('-o', '--output', default='./mybatis_output', help='输出目录')
+    parser.add_argument('-e', '--entity', help='实体类名')
+    parser.add_argument('-t', '--table', help='数据库表名')
+    parser.add_argument('-r', '--recursive', action='store_true', help='递归搜索子文件夹')
+    parser.add_argument('-s', '--preserve-structure', action='store_true', help='保持原始目录结构')
+    
+    args = parser.parse_args()
+    
+    converter = LinqToMyBatisConverter()
+    
+    if os.path.isfile(args.input):
+        print(f"\n转换单个文件: {args.input}")
+        converter.convert_file(args.input, args.output, args.entity, args.table)
+    elif os.path.isdir(args.input):
+        converter.convert_folder(args.input, args.output, args.entity, args.table, 
+                               args.recursive, args.preserve_structure)
+    else:
+        print(f"错误: 路径不存在 - {args.input}")
+
+
+if __name__ == "__main__":
+    main()
