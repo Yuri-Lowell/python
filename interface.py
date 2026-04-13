@@ -80,6 +80,7 @@ class CSharpToJavaConverter:
         """
         if not name:
             return name
+        # 确保首字母小写，其余保持原样
         return name[0].lower() + name[1:]
 
     def convert_type(self, type_name: str) -> str:
@@ -428,18 +429,18 @@ class CSharpToJavaConverter:
         return line.rstrip()
 
     def _convert_method_line(self, line: str) -> str:
-        """转换方法声明行"""
-        # 提取方法名和返回类型
-        method_match = re.match(r'^(\s*)(\w+)\s+(\w+)\s*\((.*)\)\s*(\{.*)?$', line)
-        if not method_match:
+        """转换方法声明行，方法名首字母小写"""
+        # 匹配方法声明: 返回类型 方法名(参数)
+        match = re.match(r'^(\s*)(\w+)\s+(\w+)\s*\((.*)\)', line)
+        if not match:
             return line
         
-        indent, return_type, method_name, params, body = method_match.groups()
+        indent, return_type, method_name, params = match.groups()
         
         # 转换返回类型
         new_return_type = self.convert_type(return_type)
         
-        # 转换方法名为驼峰命名（首字母小写）
+        # 方法名首字母小写
         new_method_name = self.to_camel_case(method_name)
         
         # 转换参数
@@ -451,7 +452,7 @@ class CSharpToJavaConverter:
         return new_line
 
     def _convert_parameters(self, params_str: str) -> str:
-        """转换参数列表"""
+        """转换参数列表，确保参数类型正确"""
         if not params_str or not params_str.strip():
             return ""
         
@@ -463,10 +464,10 @@ class CSharpToJavaConverter:
             part = part.strip()
             if part:
                 # 匹配类型和参数名
-                type_match = re.match(r'(\w+)\s+(\w+)', part)
-                if type_match:
-                    param_type, param_name = type_match.groups()
-                    # 转换类型（去掉I前缀）
+                match = re.match(r'(\w+)\s+(\w+)', part)
+                if match:
+                    param_type, param_name = match.groups()
+                    # 转换类型
                     new_type = self.convert_type(param_type)
                     converted_params.append(f'{new_type} {param_name}')
                 else:
@@ -475,15 +476,14 @@ class CSharpToJavaConverter:
         return ', '.join(converted_params)
 
     def _convert_property_line(self, line: str) -> str:
-        """转换属性为getter/setter方法"""
+        """转换属性为getter/setter方法，方法名首字母小写"""
         # 匹配属性模式：Type PropertyName { get; set; }
         match = re.search(r'(\w+)\s+(\w+)\s*\{\s*get;\s*set;\s*\}', line)
         if match:
             prop_type, prop_name = match.groups()
-            # 转换类型（去掉I前缀）
             java_type = self.convert_type(prop_type)
             
-            # 生成getter和setter方法声明（方法名首字母小写）
+            # getter和setter方法名首字母小写
             getter_name = self.to_camel_case(f'Get{prop_name}')
             setter_name = self.to_camel_case(f'Set{prop_name}')
             getter = f'    {java_type} {getter_name}();'
@@ -501,7 +501,7 @@ class CSharpToJavaConverter:
         return line
 
     def _convert_event_line(self, line: str) -> str:
-        """转换事件为观察者模式方法"""
+        """转换事件为观察者模式方法，方法名首字母小写"""
         match = re.search(r'event\s+(\w+)\s+(\w+)', line)
         if match:
             event_type, event_name = match.groups()
