@@ -55,35 +55,6 @@ class LinqToMyBatisConverter:
             'void': 'void',
             'Task': 'void'
         }
-        
-        # LINQ操作符映射
-        self.linq_operators = {
-            'Where': 'WHERE',
-            'Select': 'SELECT',
-            'OrderBy': 'ORDER BY',
-            'OrderByDescending': 'ORDER BY DESC',
-            'ThenBy': 'ORDER BY',
-            'ThenByDescending': 'ORDER BY DESC',
-            'GroupBy': 'GROUP BY',
-            'Join': 'JOIN',
-            'Include': 'LEFT JOIN',
-            'FirstOrDefault': 'LIMIT 1',
-            'First': 'LIMIT 1',
-            'SingleOrDefault': 'LIMIT 1',
-            'Single': 'LIMIT 1',
-            'Count': 'COUNT',
-            'Any': 'EXISTS',
-            'All': 'NOT EXISTS',
-            'Sum': 'SUM',
-            'Average': 'AVG',
-            'Max': 'MAX',
-            'Min': 'MIN',
-            'Skip': 'OFFSET',
-            'Take': 'LIMIT',
-            'Contains': 'IN',
-            'StartsWith': 'LIKE',
-            'EndsWith': 'LIKE'
-        }
 
     def find_dao_files(self, input_path: str) -> List[str]:
         """查找所有C# DAO文件"""
@@ -94,13 +65,10 @@ class LinqToMyBatisConverter:
             if input_path.suffix == '.cs':
                 dao_files.append(str(input_path))
         else:
-            # 递归查找所有.cs文件
             for cs_file in input_path.rglob('*.cs'):
-                # 检查文件名是否包含DAO或Repository
                 if any(keyword in cs_file.stem for keyword in ['DAO', 'Dao', 'Repository', 'DAL', 'Service']):
                     dao_files.append(str(cs_file))
                 else:
-                    # 检查文件内容是否包含LINQ查询
                     try:
                         with open(cs_file, 'r', encoding='utf-8') as f:
                             content = f.read(2000)
@@ -111,38 +79,48 @@ class LinqToMyBatisConverter:
         
         return dao_files
 
-    def extract_csharp_comments(self, text: str) -> List[str]:
-        """提取C#注释内容"""
-        comments = []
+    def extract_method_comments(self, method_text: str) -> Dict[str, str]:
+        """提取C#方法中的注释，返回{summary: '', params: {}, returns: ''}"""
+        result = {
+            'summary': '',
+            'params': {},
+            'returns': ''
+        }
         
-        # 提取XML注释 ///
-        xml_comment_pattern = r'///\s*(.*?)(?=\n|$)'
-        xml_comments = re.findall(xml_comment_pattern, text, re.MULTILINE)
-        for comment in xml_comments:
-            comments.append(('xml', comment.strip()))
+        # 提取summary
+        summary_match = re.search(r'///\s*<summary>\s*(.*?)\s*</summary>', method_text, re.DOTALL)
+        if summary_match:
+            summary = summary_match.group(1).strip()
+            # 去除多余的换行和空格
+            summary = re.sub(r'\s+', ' ', summary)
+            result['summary'] = summary
+        else:
+            # 尝试提取普通注释
+            single_comment = re.search(r'//\s*(.+?)(?=\n)', method_text)
+            if single_comment:
+                result['summary'] = single_comment.group(1).strip()
         
-        # 提取单行注释 //
-        single_line_pattern = r'(?<!///)//\s*(.*?)(?=\n|$)'
-        single_comments = re.findall(single_line_pattern, text, re.MULTILINE)
-        for comment in single_comments:
-            comments.append(('single', comment.strip()))
+        # 提取所有param
+        param_pattern = r'///\s*<param\s+name="(\w+)">\s*(.*?)\s*</param>'
+        for match in re.finditer(param_pattern, method_text, re.DOTALL):
+            param_name = match.group(1)
+            param_desc = re.sub(r'\s+', ' ', match.group(2).strip())
+            result['params'][param_name] = param_desc
         
-        # 提取多行注释 /* */
-        multi_line_pattern = r'/\*(.*?)\*/'
-        multi_comments = re.findall(multi_line_pattern, text, re.DOTALL)
-        for comment in multi_comments:
-            # 清理注释内容
-            cleaned = re.sub(r'\n\s*\*?\s*', '\n', comment.strip())
-            comments.append(('multi', cleaned))
+        # 提取returns
+        returns_match = re.search(r'///\s*<returns>\s*(.*?)\s*</returns>', method_text, re.DOTALL)
+        if returns_match:
+            returns_desc = re.sub(r'\s+', ' ', returns_match.group(1).strip())
+            result['returns'] = returns_desc
         
-        return comments
+        return result
 
     def parse_csharp_dao(self, file_content: str) -> Dict:
         """解析C# DAO文件，提取类名、方法、注释和LINQ查询"""
         result = {
             'namespace': '',
             'class_name': '',
-            'class_comments': [],
+            'class_comments': '',
             'methods': [],
             'usings': []
         }
@@ -156,23 +134,25 @@ class LinqToMyBatisConverter:
         if ns_match:
             result['namespace'] = ns_match.group(1)
         
-        # 提取类注释
-        class_pattern = r'((?:///\s*<summary>.*?</summary>|///\s*<remarks>.*?</remarks>|//.*?\n|/\*\*.*?\*/)*?)\s*(?:public|internal|private)?\s+(?:static\s+)?(?:partial\s+)?class\s+(\w+)'
-        class_match = re.search(class_pattern, file_content, re.DOTALL)
+        # 提取类名和类注释
+        class_match = re.search(r'((?:///\s*<summary>.*?</summary>|///\s*<remarks>.*?</remarks>|//.*?\n|/\*\*.*?\*/)*?)\s*(?:public|internal|private)?\s*(?:static\s+)?(?:partial\s+)?class\s+(\w+)', 
+                                file_content, re.DOTALL)
         if class_match:
             comment_text = class_match.group(1)
             result['class_name'] = class_match.group(2)
             if comment_text:
-                result['class_comments'] = self.extract_csharp_comments(comment_text)
+                summary_match = re.search(r'<summary>(.*?)</summary>', comment_text, re.DOTALL)
+                if summary_match:
+                    result['class_comments'] = re.sub(r'\s+', ' ', summary_match.group(1).strip())
         else:
-            # 简单匹配类名
-            simple_class_match = re.search(r'class\s+(\w+)(?:<[^>]+>)?', file_content)
+            simple_class_match = re.search(r'class\s+(\w+)', file_content)
             if simple_class_match:
                 result['class_name'] = simple_class_match.group(1)
         
-        # 提取方法及其中的LINQ查询和注释
+        # 提取方法 - 改进正则表达式以正确捕获注释
+        # 先按方法分割
         method_pattern = r'''
-            ((?:///\s*<summary>.*?</summary>|///\s*<param.*?>.*?</param>|///\s*<returns>.*?</returns>|///\s*<remarks>.*?</remarks>|//.*?\n|/\*\*.*?\*/)*?)
+            (?:(?:///.*?\n|//.*?\n|/\*.*?\*/)\s*)*
             (?:public|private|protected|internal)\s+
             (?:static\s+)?
             (?:virtual\s+)?
@@ -184,47 +164,57 @@ class LinqToMyBatisConverter:
             \s+(\w+)\s*
             \(([^)]*)\)
             \s*
-            (?:\{)
+            \{
             (.*?)
-            (?:\n\s*\})
+            \n\s*\}
         '''
         
         methods = re.finditer(method_pattern, file_content, re.VERBOSE | re.DOTALL)
         
         for method in methods:
-            comments_str = method.group(1)
-            return_type = method.group(2)
-            method_name = method.group(3)
-            parameters_str = method.group(4)
-            method_body = method.group(5)
+            return_type = method.group(1)
+            method_name = method.group(2)
+            parameters_str = method.group(3)
+            method_body = method.group(4)
             
             # 跳过构造函数
             if method_name == result['class_name']:
                 continue
             
-            # 提取方法注释
-            method_comments = self.extract_csharp_comments(comments_str) if comments_str else []
+            # 提取方法前的注释
+            # 找到方法在原文中的位置
+            method_start = method.start()
+            # 向前查找注释
+            comment_text = ""
+            if method_start > 0:
+                before_method = file_content[max(0, method_start - 500):method_start]
+                # 查找连续的行注释或XML注释
+                comment_lines = []
+                lines = before_method.split('\n')
+                for line in reversed(lines):
+                    if line.strip().startswith('///') or line.strip().startswith('//') or line.strip().startswith('/*'):
+                        comment_lines.insert(0, line)
+                    elif line.strip() and not line.strip().startswith('['):  # 不是属性
+                        break
+                comment_text = '\n'.join(comment_lines)
+            
+            method_comments = self.extract_method_comments(comment_text)
             
             # 解析参数
             parameters = self.parse_parameters(parameters_str)
             
-            # 提取LINQ查询
-            linq_queries = self.extract_linq_queries(method_body)
+            # 提取LINQ查询并生成SQL
+            sql_statement = self.generate_sql_from_method(method_body, method_name, parameters)
             
             # 推断SQL操作类型
-            sql_type = self.infer_sql_type(method_name, linq_queries)
-            
-            # 生成SQL语句
-            sql_statement = self.generate_sql_from_linq(linq_queries, method_name, parameters)
+            sql_type = self.infer_sql_type(method_name, method_body)
             
             result['methods'].append({
                 'name': method_name,
                 'return_type': return_type,
                 'parameters': parameters,
                 'sql_type': sql_type,
-                'linq_queries': linq_queries,
                 'sql_statement': sql_statement,
-                'method_body': method_body,
                 'comments': method_comments
             })
         
@@ -258,7 +248,6 @@ class LinqToMyBatisConverter:
             if not param:
                 continue
             
-            # 匹配参数类型和名称
             match = re.match(r'(?:\[.*?\])?\s*(\w+(?:<[^>]+>)?(?:\?)?)\s+(\w+)(?:\s*=.*)?', param)
             if match:
                 param_type = match.group(1)
@@ -268,243 +257,157 @@ class LinqToMyBatisConverter:
                 parameters.append({
                     'csharp_type': param_type,
                     'java_type': java_type,
-                    'name': param_name,
-                    'annotation': '@Param("' + param_name + '")'
+                    'name': param_name
                 })
         
         return parameters
 
-    def extract_linq_queries(self, method_body: str) -> List[Dict]:
-        """提取方法体中的LINQ查询"""
-        linq_queries = []
+    def generate_sql_from_method(self, method_body: str, method_name: str, parameters: List[Dict]) -> str:
+        """从方法体和LINQ查询生成SQL语句"""
+        method_lower = method_name.lower()
         
-        # 提取方法链式调用
-        chain_pattern = r'(\w+)\s*\.\s*(Where|Select|OrderBy|OrderByDescending|GroupBy|Join|Include|FirstOrDefault|First|SingleOrDefault|Single|Count|Any|Sum|Average|Max|Min|Skip|Take|ToList|ToArray)\s*\(\s*([^)]*)\s*\)'
-        chains = re.finditer(chain_pattern, method_body)
+        # 查找Entity Framework的LINQ模式
+        linq_patterns = [
+            # _context.Users.Where(u => u.Id == id).FirstOrDefault()
+            r'_context\.(\w+)\.Where\s*\(\s*\w+\s*=>\s*([^)]+)\s*\)\s*\.(FirstOrDefault|First|SingleOrDefault|ToList|ToArray)',
+            # _context.Users.FirstOrDefault(u => u.Id == id)
+            r'_context\.(\w+)\.(FirstOrDefault|First|SingleOrDefault)\s*\(\s*\w+\s*=>\s*([^)]+)\s*\)',
+            # from u in _context.Users where u.Id == id select u
+            r'from\s+(\w+)\s+in\s+_context\.(\w+)\s+where\s+([^\s]+)\s*==\s*([^\s]+)\s+select\s+\1',
+            # _context.Users.Where(u => u.Name.Contains(name)).ToList()
+            r'_context\.(\w+)\.Where\s*\(\s*\w+\s*=>\s*([^)]+)\s*\)\s*\.ToList',
+            # _context.Users.Count()
+            r'_context\.(\w+)\.Count\s*\(\s*\)',
+            # _context.Users.Any(u => u.Id == id)
+            r'_context\.(\w+)\.Any\s*\(\s*\w+\s*=>\s*([^)]+)\s*\)',
+        ]
         
-        for chain in chains:
-            linq_queries.append({
-                'type': 'chain',
-                'source': chain.group(1),
-                'operator': chain.group(2),
-                'predicate': chain.group(3)
-            })
-        
-        # 提取查询表达式
-        query_pattern = r'from\s+(\w+)\s+in\s+(\w+)\s+(?:join\s+\w+\s+in\s+\w+\s+on\s+[^\s]+\s+equals\s+[^\s]+\s+)?(?:where\s+([^\n]+))?(?:orderby\s+([^\n]+))?(?:select\s+([^\n]+))?'
-        queries = re.finditer(query_pattern, method_body, re.IGNORECASE)
-        
-        for query in queries:
-            linq_queries.append({
-                'type': 'expression',
-                'range_var': query.group(1),
-                'source': query.group(2),
-                'where': query.group(3),
-                'orderby': query.group(4),
-                'select': query.group(5)
-            })
-        
-        return linq_queries
-
-    def generate_sql_from_linq(self, linq_queries: List[Dict], method_name: str, parameters: List[Dict]) -> str:
-        """从LINQ查询生成SQL语句"""
-        if not linq_queries:
-            # 根据方法名和参数生成默认SQL
-            return self.generate_default_sql(method_name, parameters)
-        
-        sql_parts = []
         table_name = self.infer_table_name(method_name)
+        where_conditions = []
+        is_count = False
+        is_any = False
         
-        for query in linq_queries:
-            if query['type'] == 'chain':
-                sql = self.convert_chain_to_sql(query, table_name, parameters)
-                if sql:
-                    sql_parts.append(sql)
-            elif query['type'] == 'expression':
-                sql = self.convert_expression_to_sql(query, table_name, parameters)
-                if sql:
-                    sql_parts.append(sql)
+        for pattern in linq_patterns:
+            match = re.search(pattern, method_body)
+            if match:
+                if pattern == r'_context\.(\w+)\.Count\s*\(\s*\)':
+                    is_count = True
+                    table_name = self.camel_to_snake(match.group(1))
+                    break
+                elif pattern == r'_context\.(\w+)\.Any\s*\(\s*\w+\s*=>\s*([^)]+)\s*\)':
+                    is_any = True
+                    table_name = self.camel_to_snake(match.group(1))
+                    condition = match.group(2)
+                    where_conditions.append(self.convert_condition_to_sql(condition, parameters))
+                    break
+                elif 'Where' in pattern:
+                    if len(match.groups()) >= 2:
+                        table_name = self.camel_to_snake(match.group(1))
+                        condition = match.group(2)
+                        where_conditions.append(self.convert_condition_to_sql(condition, parameters))
+                        break
+                elif 'FirstOrDefault' in pattern or 'First' in pattern:
+                    if len(match.groups()) >= 3:
+                        table_name = self.camel_to_snake(match.group(1))
+                        condition = match.group(3)
+                        where_conditions.append(self.convert_condition_to_sql(condition, parameters))
+                        break
+                elif pattern == r'from\s+(\w+)\s+in\s+_context\.(\w+)\s+where\s+([^\s]+)\s*==\s*([^\s]+)\s+select\s+\1':
+                    table_name = self.camel_to_snake(match.group(2))
+                    left = match.group(3)
+                    right = match.group(4)
+                    # 转换字段名
+                    left_field = self.camel_to_snake(left.split('.')[-1] if '.' in left else left)
+                    where_conditions.append(f"{left_field} = #{{{right}}}")
+                    break
         
-        result = ' '.join(sql_parts) if sql_parts else self.generate_default_sql(method_name, parameters)
+        # 如果没有找到LINQ模式，根据方法名生成SQL
+        if not where_conditions and not is_count and not is_any:
+            # 解析方法名如 GetUserById, FindUserByName
+            if 'get' in method_lower or 'find' in method_lower:
+                # 提取条件字段
+                condition_match = re.search(r'(?:get|find)(\w+)(?:by)?(\w*)', method_name, re.IGNORECASE)
+                if condition_match:
+                    entity_part = condition_match.group(1)
+                    field_part = condition_match.group(2)
+                    if field_part:
+                        field_name = field_part
+                        param_name = field_part[0].lower() + field_part[1:] if field_part else field_part
+                    else:
+                        field_name = 'id'
+                        param_name = 'id'
+                    
+                    snake_field = self.camel_to_snake(field_name)
+                    where_conditions.append(f"{snake_field} = #{{{param_name}}}")
+            
+            # 处理count查询
+            if 'count' in method_lower:
+                is_count = True
         
-        # 清理多余的空白
-        result = re.sub(r'\s+', ' ', result).strip()
+        # 构建SQL语句
+        if is_count:
+            return f"SELECT COUNT(*) FROM {table_name}"
         
-        return result
+        if is_any:
+            where_sql = ' AND '.join(where_conditions) if where_conditions else '1=1'
+            return f"SELECT 1 FROM {table_name} WHERE {where_sql} LIMIT 1"
+        
+        if where_conditions:
+            where_sql = ' AND '.join(where_conditions)
+            return f"SELECT * FROM {table_name} WHERE {where_sql}"
+        
+        # 默认查询所有
+        if 'getall' in method_lower or 'findall' in method_lower:
+            return f"SELECT * FROM {table_name}"
+        
+        # 插入操作
+        if 'insert' in method_lower or 'add' in method_lower:
+            return f"INSERT INTO {table_name}"
+        
+        # 更新操作
+        if 'update' in method_lower:
+            return f"UPDATE {table_name} SET"
+        
+        # 删除操作
+        if 'delete' in method_lower or 'remove' in method_lower:
+            return f"DELETE FROM {table_name}"
+        
+        return f"SELECT * FROM {table_name}"
 
-    def convert_chain_to_sql(self, query: Dict, table_name: str, parameters: List[Dict]) -> str:
-        """转换方法链式调用为SQL"""
-        operator = query['operator']
-        predicate = query['predicate']
+    def convert_condition_to_sql(self, condition: str, parameters: List[Dict]) -> str:
+        """将C#条件表达式转换为SQL WHERE条件"""
+        sql = condition
         
-        if operator == 'Where':
-            return self.convert_where_to_sql(predicate, parameters)
-        elif operator == 'Select':
-            return self.convert_select_to_sql(predicate)
-        elif operator == 'OrderBy':
-            field = self.convert_field_name(predicate)
-            return f"ORDER BY {field} ASC" if field else ""
-        elif operator == 'OrderByDescending':
-            field = self.convert_field_name(predicate)
-            return f"ORDER BY {field} DESC" if field else ""
-        elif operator in ['FirstOrDefault', 'First']:
-            return "LIMIT 1"
-        elif operator == 'Count':
-            return "SELECT COUNT(*) FROM"
-        elif operator == 'Any':
-            return "SELECT 1 FROM"
-        elif operator in ['Sum', 'Average', 'Max', 'Min']:
-            agg_func = operator.upper()
-            field = self.convert_field_name(predicate) if predicate and predicate != 'null' else '*'
-            return f"SELECT {agg_func}({field}) FROM"
-        elif operator == 'ToList' or operator == 'ToArray':
-            return ""
-        
-        return ""
-
-    def convert_expression_to_sql(self, query: Dict, table_name: str, parameters: List[Dict]) -> str:
-        """转换查询表达式为SQL"""
-        sql_parts = []
-        
-        # SELECT子句
-        if query.get('select'):
-            select_sql = self.convert_select_clause(query['select'])
-            sql_parts.append(f"SELECT {select_sql}")
-        else:
-            sql_parts.append("SELECT *")
-        
-        # FROM子句
-        sql_parts.append(f"FROM {table_name}")
-        if query.get('range_var'):
-            sql_parts[-1] += f" {query['range_var']}"
-        
-        # WHERE子句
-        if query.get('where'):
-            where_sql = self.convert_where_to_sql(query['where'], parameters)
-            if where_sql:
-                sql_parts.append(f"WHERE {where_sql}")
-        
-        # ORDER BY子句
-        if query.get('orderby'):
-            sql_parts.append(f"ORDER BY {self.convert_field_name(query['orderby'])}")
-        
-        return ' '.join(sql_parts)
-
-    def convert_where_to_sql(self, predicate: str, parameters: List[Dict]) -> str:
-        """转换WHERE条件为SQL，支持参数映射"""
-        if not predicate or predicate.strip() == '':
-            return "1=1"
-        
-        sql = predicate
-        
-        # 替换C#运算符为SQL运算符
+        # 处理相等比较
         sql = re.sub(r'==', '=', sql)
         sql = re.sub(r'!=', '!=', sql)
-        sql = re.sub(r'&&', 'AND', sql)
-        sql = re.sub(r'\|\|', 'OR', sql)
-        sql = re.sub(r'!', 'NOT ', sql)
+        
+        # 处理字符串方法
+        sql = re.sub(r'\.Contains\(([^)]+)\)', r'LIKE CONCAT(\'%\', \1, \'%\')', sql)
+        sql = re.sub(r'\.StartsWith\(([^)]+)\)', r'LIKE CONCAT(\1, \'%\')', sql)
+        sql = re.sub(r'\.EndsWith\(([^)]+)\)', r'LIKE CONCAT(\'%\', \1)', sql)
         
         # 处理lambda表达式参数 (u => u.Id == id)
         sql = re.sub(r'\w+\s*=>\s*', '', sql)
         
-        # 字符串方法转换
-        sql = re.sub(r'\.Contains\(([^)]+)\)', r'LIKE CONCAT(\'%\', \1, \'%\')', sql)
-        sql = re.sub(r'\.StartsWith\(([^)]+)\)', r'LIKE CONCAT(\1, \'%\')', sql)
-        sql = re.sub(r'\.EndsWith\(([^)]+)\)', r'LIKE CONCAT(\'%\', \1)', sql)
-        sql = re.sub(r'\.ToLower\(\)', 'LOWER', sql)
-        sql = re.sub(r'\.ToUpper\(\)', 'UPPER', sql)
-        
-        # 空值检查
-        sql = re.sub(r'==\s*null', 'IS NULL', sql)
-        sql = re.sub(r'!=\s*null', 'IS NOT NULL', sql)
-        
-        # 转换字段名为下划线命名
-        sql = self.convert_field_names_in_expression(sql)
-        
-        # 将参数占位符转换为MyBatis格式 #{param}
-        for param in parameters:
-            param_name = param['name']
-            # 匹配参数名（作为变量使用），避免匹配到字段名
-            sql = re.sub(rf'\b{param_name}\b(?!\.)(?![a-zA-Z0-9_])', f'#{{{param_name}}}', sql)
-        
-        return sql
-
-    def convert_select_clause(self, select_expr: str) -> str:
-        """转换SELECT子句"""
-        if not select_expr or select_expr.strip() == '':
-            return "*"
-        
-        # 移除lambda表达式参数
-        select_expr = re.sub(r'\w+\s*=>\s*', '', select_expr)
-        
-        # 如果是 new { ... } 匿名对象
-        if 'new {' in select_expr:
-            fields = re.findall(r'(\w+)\s*=', select_expr)
-            if fields:
-                return ', '.join([self.convert_field_name(f) for f in fields])
-        
-        # 直接字段选择
-        if select_expr.strip() != '*':
-            return self.convert_field_name(select_expr)
-        
-        return "*"
-
-    def convert_field_name(self, field_expr: str) -> str:
-        """转换字段名为数据库字段名（驼峰转下划线）"""
-        # 提取字段名
-        field_match = re.search(r'(\w+)', field_expr)
-        if field_match:
-            field = field_match.group(1)
-            return self.camel_to_snake(field)
-        return field_expr
-
-    def convert_field_names_in_expression(self, expression: str) -> str:
-        """转换表达式中的所有字段名"""
-        # 匹配类似 obj.Field 的模式
+        # 转换字段名 (Id -> id, UserName -> user_name)
         def replace_field(match):
             field = match.group(1)
             return self.camel_to_snake(field)
         
-        # 匹配变量名.字段名
-        pattern = r'\w+\.(\w+)'
-        expression = re.sub(pattern, replace_field, expression)
+        sql = re.sub(r'(\w+)\.(\w+)', lambda m: f"{self.camel_to_snake(m.group(2))}", sql)
         
-        return expression
-
-    def generate_default_sql(self, method_name: str, parameters: List[Dict]) -> str:
-        """根据方法名和参数生成默认SQL"""
-        method_lower = method_name.lower()
+        # 替换参数为MyBatis格式
+        for param in parameters:
+            sql = re.sub(rf'\b{param["name"]}\b', f'#{{{param["name"]}}}', sql)
         
-        # 处理 findByXXX 或 getByXXX 模式
-        if 'getby' in method_lower or 'findby' in method_lower:
-            # 解析字段名
-            fields = re.findall(r'(?:get|find)by(\w+)', method_lower, re.IGNORECASE)
-            if fields:
-                where_parts = []
-                for field in fields:
-                    # 将驼峰字段名转换为下划线
-                    snake_field = self.camel_to_snake(field)
-                    # 参数名首字母小写
-                    param_name = field[0].lower() + field[1:] if field else field
-                    where_parts.append(f"{snake_field} = #{{{param_name}}}")
-                return f"WHERE {' AND '.join(where_parts)}"
-        
-        # 处理count查询
-        if 'count' in method_lower:
-            return "SELECT COUNT(*) FROM"
-        
-        # 处理getAll或findAll
-        if 'getall' in method_lower or 'findall' in method_lower:
-            return "SELECT * FROM"
-        
-        return "SELECT * FROM"
+        return sql
 
     def infer_table_name(self, method_name: str) -> str:
         """推断表名"""
         method_lower = method_name.lower()
         
-        # 常见表名映射
-        table_keywords = {
+        table_mappings = {
             'user': 'user',
             'users': 'user',
             'order': 'orders',
@@ -512,20 +415,21 @@ class LinqToMyBatisConverter:
             'product': 'product',
             'products': 'product',
             'customer': 'customer',
-            'customers': 'customer'
+            'customers': 'customer',
+            'employee': 'employee',
+            'employees': 'employee'
         }
         
-        for keyword, table in table_keywords.items():
+        for keyword, table in table_mappings.items():
             if keyword in method_lower:
                 return table
         
         return 'table_name'
 
-    def infer_sql_type(self, method_name: str, linq_queries: List[Dict]) -> str:
+    def infer_sql_type(self, method_name: str, method_body: str) -> str:
         """推断SQL操作类型"""
         method_lower = method_name.lower()
         
-        # 根据方法名判断
         if any(method_lower.startswith(prefix) for prefix in ['get', 'select', 'find', 'query', 'fetch']):
             return 'SELECT'
         elif any(method_lower.startswith(prefix) for prefix in ['insert', 'add', 'create', 'save']):
@@ -535,29 +439,24 @@ class LinqToMyBatisConverter:
         elif any(method_lower.startswith(prefix) for prefix in ['delete', 'remove', 'erase']):
             return 'DELETE'
         
-        # 根据LINQ操作符判断
-        for query in linq_queries:
-            if query.get('operator') in ['Count', 'Any', 'Sum', 'Average', 'Max', 'Min']:
-                return 'SELECT'
+        if 'Count' in method_name or 'count' in method_lower:
+            return 'SELECT'
         
         return 'SELECT'
 
     def map_to_java_type(self, csharp_type: str) -> str:
         """将C#类型映射到Java类型"""
-        # 处理泛型
         if '<' in csharp_type:
             base_type = csharp_type[:csharp_type.index('<')]
             inner_type = csharp_type[csharp_type.index('<')+1:csharp_type.rindex('>')]
             
             if base_type in ['List', 'IEnumerable', 'ICollection']:
-                inner_java_type = self.map_to_java_type(inner_type)
-                return f'List<{inner_java_type}>'
+                return f'List<{self.map_to_java_type(inner_type)}>'
             elif base_type == 'Dictionary':
                 types = inner_type.split(',')
                 if len(types) == 2:
                     return f'Map<{self.map_to_java_type(types[0].strip())}, {self.map_to_java_type(types[1].strip())}>'
         
-        # 基本类型映射
         base_type = csharp_type.rstrip('?')
         java_type = self.csharp_to_java_type.get(base_type, base_type)
         
@@ -574,83 +473,37 @@ class LinqToMyBatisConverter:
         return method_name[0].lower() + method_name[1:]
 
     def convert_return_type(self, method: Dict, entity_name: str) -> Tuple[str, bool]:
-        """转换返回类型，返回(类型名, 是否为集合)"""
+        """转换返回类型"""
         return_type = method['return_type']
         
-        # 检查是否是集合类型
         is_collection = any(x in return_type for x in ['List', 'IEnumerable', 'ICollection', 'IList'])
         
         if is_collection:
-            # 提取泛型内部类型
             inner_match = re.search(r'<(\w+)>', return_type)
             if inner_match:
                 inner_type = inner_match.group(1)
                 if inner_type == entity_name or inner_type == entity_name + '?':
                     return f'List<{entity_name}>', True
                 else:
-                    java_inner = self.map_to_java_type(inner_type)
-                    return f'List<{java_inner}>', True
+                    return f'List<{self.map_to_java_type(inner_type)}>', True
             return f'List<{entity_name}>', True
         
-        # 处理单个实体
         if return_type == entity_name or return_type == entity_name + '?':
             return entity_name, False
         
-        # 处理void
-        if return_type.lower() == 'void' or return_type.lower() == 'task':
+        if return_type.lower() in ['void', 'task']:
             return 'void', False
         
-        # 处理值类型
         java_type = self.map_to_java_type(return_type)
-        
-        # 处理int/long等返回类型（可能是count）
-        if java_type in ['Integer', 'Long', 'int', 'long']:
-            return java_type, False
-        
         return java_type, False
 
-    def convert_csharp_comment_to_java(self, comments: List[Tuple[str, str]], method_name: str, parameters: List[Dict], return_type: str) -> str:
-        """将C#注释转换为Java注释格式，包含@param和@return"""
-        if not comments:
-            # 如果没有注释，生成默认注释
-            java_comment = f"    /**\n     * {method_name}\n"
-            for param in parameters:
-                java_comment += f"     * @param {param['name']} \n"
-            if return_type != 'void':
-                java_comment += f"     * @return {return_type}\n"
-            java_comment += "     */"
-            return java_comment
-        
+    def generate_java_comment(self, comments: Dict, method_name: str, parameters: List[Dict], return_type: str) -> str:
+        """生成Java注释，去除XML标签"""
         java_lines = ["    /**"]
         
-        # 提取summary内容
-        summary = ""
-        params_dict = {}
-        returns = ""
-        
-        for comment_type, comment in comments:
-            if comment_type == 'xml':
-                # 处理XML注释
-                if '<summary>' in comment:
-                    summary_match = re.search(r'<summary>(.*?)</summary>', comment, re.DOTALL)
-                    if summary_match:
-                        summary = summary_match.group(1).strip()
-                elif '<param' in comment:
-                    param_match = re.search(r'<param\s+name="(\w+)">(.*?)</param>', comment, re.DOTALL)
-                    if param_match:
-                        params_dict[param_match.group(1)] = param_match.group(2).strip()
-                elif '<returns>' in comment:
-                    returns_match = re.search(r'<returns>(.*?)</returns>', comment, re.DOTALL)
-                    if returns_match:
-                        returns = returns_match.group(1).strip()
-            else:
-                # 普通注释
-                if not summary:
-                    summary = comment
-        
-        # 添加方法说明
-        if summary:
-            java_lines.append(f"     * {summary}")
+        # 添加summary
+        if comments.get('summary'):
+            java_lines.append(f"     * {comments['summary']}")
         else:
             java_lines.append(f"     * {method_name}")
         
@@ -659,13 +512,14 @@ class LinqToMyBatisConverter:
         # 添加@param标签
         for param in parameters:
             param_name = param['name']
-            param_desc = params_dict.get(param_name, "")
+            param_desc = comments.get('params', {}).get(param_name, "")
             java_lines.append(f"     * @param {param_name} {param_desc}")
         
         # 添加@return标签
         if return_type != 'void':
-            if returns:
-                java_lines.append(f"     * @return {return_type} {returns}")
+            returns_desc = comments.get('returns', "")
+            if returns_desc:
+                java_lines.append(f"     * @return {return_type} {returns_desc}")
             else:
                 java_lines.append(f"     * @return {return_type}")
         
@@ -677,10 +531,8 @@ class LinqToMyBatisConverter:
         """生成Java Mapper接口代码"""
         class_name = dao_info['class_name']
         
-        # 生成包名
         package_name = self.convert_namespace_to_package(dao_info['namespace'])
         
-        # 生成Mapper名称
         mapper_name = class_name
         for suffix in ['DAO', 'Dao', 'Repository', 'DAL', 'Service']:
             if mapper_name.endswith(suffix):
@@ -688,7 +540,6 @@ class LinqToMyBatisConverter:
                 break
         mapper_name += 'Mapper'
         
-        # 确定实体类名
         if not entity_name:
             entity_name = class_name
             for suffix in ['DAO', 'Dao', 'Repository', 'DAL', 'Service']:
@@ -696,7 +547,6 @@ class LinqToMyBatisConverter:
                     entity_name = entity_name[:-len(suffix)]
                     break
         
-        # 生成导入语句
         imports = set()
         imports.add('org.apache.ibatis.annotations.Mapper')
         imports.add('org.apache.ibatis.annotations.Param')
@@ -723,48 +573,36 @@ class LinqToMyBatisConverter:
         # 生成类注释
         class_comment = ""
         if dao_info.get('class_comments'):
-            java_class_comments = []
-            for comment_type, comment in dao_info['class_comments']:
-                if comment_type == 'xml' and '<summary>' in comment:
-                    summary_match = re.search(r'<summary>(.*?)</summary>', comment, re.DOTALL)
-                    if summary_match:
-                        java_class_comments.append(f" * {summary_match.group(1).strip()}")
-                else:
-                    java_class_comments.append(f" * {comment}")
-            if java_class_comments:
-                class_comment = "/**\n" + '\n'.join(java_class_comments) + "\n */\n"
+            class_comment = f"""
+/**
+ * {dao_info['class_comments']}
+ */"""
         
-        # 生成接口代码
         java_code = f"""package {package_name};
-
 {import_lines}
-
-{class_comment}@Mapper
+{class_comment}
+@Mapper
 public interface {mapper_name} {{
 
 """
         
-        # 生成方法
         for method in dao_info['methods']:
             method_name = self.convert_method_name(method['name'])
             return_type, _ = self.convert_return_type(method, entity_name)
             
-            # 生成方法注释
-            method_comment = self.convert_csharp_comment_to_java(
-                method.get('comments', []), 
-                method_name, 
-                method['parameters'], 
+            method_comment = self.generate_java_comment(
+                method.get('comments', {}),
+                method_name,
+                method['parameters'],
                 return_type
             )
             
-            # 构建参数列表
             params = []
             for param in method['parameters']:
                 params.append(f"@Param(\"{param['name']}\") {param['java_type']} {param['name']}")
             
             param_str = ', '.join(params) if params else ''
             
-            # 生成方法定义
             method_code = f"""
 {method_comment}
     {return_type} {method_name}({param_str});
@@ -775,7 +613,7 @@ public interface {mapper_name} {{
         return java_code, mapper_name, entity_name, package_name
 
     def generate_mapper_xml(self, dao_info: Dict, mapper_name: str, entity_name: str, table_name: str = None) -> str:
-        """生成MyBatis Mapper XML文件（使用resultType）"""
+        """生成MyBatis Mapper XML文件"""
         if not table_name:
             table_name = self.camel_to_snake(entity_name)
         
@@ -790,7 +628,6 @@ public interface {mapper_name} {{
 
 '''
         
-        # 为每个方法生成SQL
         for method in dao_info['methods']:
             sql_id = self.convert_method_name(method['name'])
             sql_type = method['sql_type']
@@ -809,63 +646,65 @@ public interface {mapper_name} {{
         return xml
 
     def generate_select_sql(self, sql_id: str, method: Dict, table_name: str, entity_name: str, sql_statement: str) -> str:
-        """生成SELECT语句（使用正确的resultType）"""
-        params = method['parameters']
+        """生成SELECT语句"""
         method_name_lower = method['name'].lower()
         
-        # 确定正确的返回类型
+        # 确定返回类型
         if 'count' in method_name_lower or 'total' in method_name_lower:
             result_type = 'int'
         elif 'exists' in method_name_lower or 'any' in method_name_lower:
             result_type = 'int'
-        elif method['return_type'] and ('int' in method['return_type'].lower() or 'long' in method['return_type'].lower()):
-            result_type = 'int'
         else:
             result_type = entity_name
         
-        # 构建WHERE条件
-        where_clause = ""
-        
-        # 处理从LINQ生成的SQL语句
-        if sql_statement and sql_statement.strip():
-            sql_upper = sql_statement.upper()
+        # 处理SQL语句
+        if sql_statement:
+            # 移除可能的多余空格
+            sql_statement = sql_statement.strip()
             
-            # 如果SQL包含完整的SELECT ... FROM ...
-            if 'SELECT' in sql_upper and 'FROM' in sql_upper:
-                # 提取WHERE部分
-                where_match = re.search(r'WHERE\s+(.+?)(?:ORDER BY|LIMIT|$)', sql_statement, re.IGNORECASE)
-                if where_match:
-                    where_clause = f"        WHERE {where_match.group(1)}"
-                else:
-                    # 完整SQL，直接使用
-                    return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
+            # 如果SQL以SELECT开头，直接使用
+            if sql_statement.upper().startswith('SELECT'):
+                return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
         {sql_statement}
     </select>
 
 '''
-            elif 'WHERE' in sql_upper:
-                # 只有WHERE子句
-                where_clause = f"        {sql_statement}"
+            # 如果只有WHERE条件
+            elif sql_statement.upper().startswith('WHERE'):
+                return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
+        SELECT * FROM {table_name}
+        {sql_statement}
+    </select>
+
+'''
+            # 其他情况，作为WHERE条件处理
             else:
-                # 可能是其他条件
-                where_clause = f"        {sql_statement}"
-        elif params:
-            # 根据参数生成动态WHERE
+                return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
+        SELECT * FROM {table_name}
+        WHERE {sql_statement}
+    </select>
+
+'''
+        
+        # 默认生成带条件的SQL
+        if method['parameters']:
             conditions = []
-            for param in params:
+            for param in method['parameters']:
                 conditions.append(f"            <if test=\"{param['name']} != null\">\n                AND {self.camel_to_snake(param['name'])} = #{{{param['name']}}}\n            </if>")
             where_clause = "        <where>\n" + "\n".join(conditions) + "\n        </where>"
-        else:
-            where_clause = "        <!-- 添加WHERE条件 -->"
-        
-        xml = f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
-        SELECT <include refid="Base_Column_List"/>
-        FROM {table_name}
+            
+            return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
+        SELECT * FROM {table_name}
 {where_clause}
     </select>
 
 '''
-        return xml
+        
+        return f'''    <select id="{sql_id}" resultType="{result_type}" parameterType="map">
+        SELECT * FROM {table_name}
+    </select>
+
+'''
 
     def generate_insert_sql(self, sql_id: str, method: Dict, table_name: str) -> str:
         """生成INSERT语句"""
@@ -882,7 +721,7 @@ public interface {mapper_name} {{
         columns = [self.camel_to_snake(p['name']) for p in params]
         values = [f"#{{{p['name']}}}" for p in params]
         
-        xml = f'''    <insert id="{sql_id}" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        return f'''    <insert id="{sql_id}" parameterType="map" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO {table_name} (
             {', '.join(columns)}
         ) VALUES (
@@ -891,7 +730,6 @@ public interface {mapper_name} {{
     </insert>
 
 '''
-        return xml
 
     def generate_update_sql(self, sql_id: str, method: Dict, table_name: str) -> str:
         """生成UPDATE语句"""
@@ -932,7 +770,7 @@ public interface {mapper_name} {{
         else:
             where_clause = "        <!-- TODO: 配置WHERE条件 -->"
         
-        xml = f'''    <update id="{sql_id}" parameterType="map">
+        return f'''    <update id="{sql_id}" parameterType="map">
         UPDATE {table_name}
         <set>
 {set_str}
@@ -941,7 +779,6 @@ public interface {mapper_name} {{
     </update>
 
 '''
-        return xml
 
     def generate_delete_sql(self, sql_id: str, method: Dict, table_name: str) -> str:
         """生成DELETE语句"""
@@ -956,13 +793,12 @@ public interface {mapper_name} {{
         else:
             where_clause = "        <!-- TODO: 配置WHERE条件 -->"
         
-        xml = f'''    <delete id="{sql_id}" parameterType="map">
+        return f'''    <delete id="{sql_id}" parameterType="map">
         DELETE FROM {table_name}
 {where_clause}
     </delete>
 
 '''
-        return xml
 
     def convert_namespace_to_package(self, namespace: str) -> str:
         """将C#命名空间转换为Java包名"""
@@ -971,17 +807,6 @@ public interface {mapper_name} {{
         
         package = namespace.lower()
         package = package.replace('.', '.')
-        
-        # 替换常见前缀
-        replacements = [
-            ('myapp.', 'com.company.'),
-            ('mydomain.', 'com.domain.'),
-        ]
-        
-        for old, new in replacements:
-            if package.startswith(old):
-                package = package.replace(old, new, 1)
-                break
         
         if not package.endswith('mapper'):
             if '.' in package:
@@ -996,11 +821,15 @@ public interface {mapper_name} {{
         if not name:
             return name
         
+        # 处理首字母大写
         if name[0].isupper():
             name = name[0].lower() + name[1:]
         
+        # 转换驼峰为下划线
         s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+        result = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+        
+        return result
 
     def convert_file(self, input_file: str, output_dir: str = "./output", 
                     entity_name: str = None, table_name: str = None,
@@ -1024,7 +853,6 @@ public interface {mapper_name} {{
             
             print(f"  解析到 {len(dao_info['methods'])} 个方法")
             
-            # 确定输出路径
             if preserve_structure and base_path:
                 rel_path = os.path.relpath(input_file, base_path)
                 output_subdir = os.path.dirname(rel_path)
@@ -1037,13 +865,9 @@ public interface {mapper_name} {{
             Path(java_output_dir).mkdir(parents=True, exist_ok=True)
             Path(xml_output_dir).mkdir(parents=True, exist_ok=True)
             
-            # 生成Java Mapper
             java_code, mapper_name, auto_entity_name, package_name = self.generate_mapper_java(dao_info, entity_name)
-            
-            # 生成XML
             xml_code = self.generate_mapper_xml(dao_info, mapper_name, auto_entity_name, table_name)
             
-            # 保存文件
             java_file = os.path.join(java_output_dir, f"{mapper_name}.java")
             xml_file = os.path.join(xml_output_dir, f"{mapper_name}.xml")
             
@@ -1060,116 +884,3 @@ public interface {mapper_name} {{
             print(f"  ❌ 转换失败: {input_file}")
             print(f"     错误: {str(e)}")
             import traceback
-            traceback.print_exc()
-            return False
-
-    def convert_folder(self, input_folder: str, output_dir: str = "./output",
-                      entity_name: str = None, table_name: str = None,
-                      recursive: bool = True, preserve_structure: bool = False):
-        """转换文件夹中的所有C# DAO文件"""
-        print(f"\n{'='*70}")
-        print(f"  C# LINQ to SQL -> Java MyBatis Mapper 转换工具")
-        print(f"{'='*70}")
-        print(f"输入路径: {input_folder}")
-        print(f"输出目录: {output_dir}")
-        print(f"{'='*70}\n")
-        
-        dao_files = self.find_dao_files(input_folder)
-        
-        if not dao_files:
-            print("❌ 未找到任何C# DAO文件")
-            return
-        
-        print(f"找到 {len(dao_files)} 个C# DAO文件\n")
-        
-        success_count = 0
-        fail_count = 0
-        base_path = input_folder if preserve_structure else None
-        
-        for i, dao_file in enumerate(dao_files, 1):
-            print(f"[{i}/{len(dao_files)}] 处理: {dao_file}")
-            
-            if self.convert_file(dao_file, output_dir, entity_name, table_name, 
-                               preserve_structure, base_path):
-                success_count += 1
-            else:
-                fail_count += 1
-            print()
-        
-        print(f"{'='*70}")
-        print(f"转换完成!")
-        print(f"成功: {success_count} 个文件")
-        print(f"失败: {fail_count} 个文件")
-        print(f"输出目录: {output_dir}")
-        print(f"{'='*70}\n")
-        
-        self.generate_summary_report(output_dir, success_count, fail_count)
-
-    def generate_summary_report(self, output_dir: str, success_count: int, fail_count: int):
-        """生成转换汇总报告"""
-        report_path = os.path.join(output_dir, "conversion_report.txt")
-        
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write("C# LINQ to SQL 转 Java MyBatis Mapper 转换报告\n")
-            f.write("="*60 + "\n")
-            f.write(f"转换时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"成功数量: {success_count}\n")
-            f.write(f"失败数量: {fail_count}\n")
-            f.write("="*60 + "\n\n")
-            f.write("生成的Java Mapper接口和XML文件位于:\n")
-            f.write(f"  Java文件: {os.path.join(output_dir, 'java')}\n")
-            f.write(f"  XML文件: {os.path.join(output_dir, 'xml')}\n")
-            f.write("\n注意事项:\n")
-            f.write("1. 请根据实际业务需求完善生成的SQL语句\n")
-            f.write("2. 请配置正确的实体类和字段映射\n")
-            f.write("3. 请检查参数类型映射是否正确\n")
-            f.write("4. 建议手动验证生成的代码\n")
-            f.write("5. XML中使用resultType而非resultMap\n")
-            f.write("6. Java注释已自动转换为Javadoc格式，包含@param和@return\n")
-        
-        print(f"📄 转换报告已生成: {report_path}")
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='将C# LINQ DAO转换为Java MyBatis Mapper',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  # 转换单个文件
-  python linq_to_mybatis.py -i UserDAO.cs -o ./output
-  
-  # 转换整个文件夹
-  python linq_to_mybatis.py -i ./CSharpProject/DAL -o ./mybatis
-  
-  # 递归转换并保持目录结构
-  python linq_to_mybatis.py -i ./CSharpProject -o ./mybatis -r -s
-  
-  # 指定实体类和表名
-  python linq_to_mybatis.py -i UserDAO.cs -e User -t t_user -o ./output
-        """
-    )
-    
-    parser.add_argument('-i', '--input', required=True, help='输入的C#文件或文件夹路径')
-    parser.add_argument('-o', '--output', default='./mybatis_output', help='输出目录 (默认: ./mybatis_output)')
-    parser.add_argument('-e', '--entity', help='实体类名 (默认: 自动推断)')
-    parser.add_argument('-t', '--table', help='数据库表名 (默认: 根据实体名转换)')
-    parser.add_argument('-r', '--recursive', action='store_true', help='递归搜索子文件夹')
-    parser.add_argument('-s', '--preserve-structure', action='store_true', help='保持原始目录结构')
-    
-    args = parser.parse_args()
-    
-    converter = LinqToMyBatisConverter()
-    
-    if os.path.isfile(args.input):
-        print(f"\n转换单个文件: {args.input}")
-        converter.convert_file(args.input, args.output, args.entity, args.table)
-    elif os.path.isdir(args.input):
-        converter.convert_folder(args.input, args.output, args.entity, args.table, 
-                               args.recursive, args.preserve_structure)
-    else:
-        print(f"错误: 路径不存在 - {args.input}")
-
-
-if __name__ == "__main__":
-    main()
