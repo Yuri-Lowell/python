@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ASPX to Thymeleaf 转换器 - 修正版
-修复未定义变量问题
+ASPX to Thymeleaf 转换器 - 最终完整版
+所有变量名统一规范，使用安全默认值避免未定义错误
 """
 
 import re
@@ -65,7 +65,6 @@ class HTML5AttributeConverter:
         self.conversion_log = []
     
     def convert_attributes_to_style(self, tag_name, attributes):
-        """将废弃属性转换为 style 属性"""
         styles = []
         new_attributes = {}
         
@@ -101,7 +100,6 @@ class HTML5AttributeConverter:
         return new_attributes
     
     def convert_inline_tags(self, content):
-        """转换内联样式标签"""
         def convert_font(match):
             attrs = self._parse_attributes(match.group(1))
             styles = []
@@ -127,7 +125,6 @@ class HTML5AttributeConverter:
         return content
     
     def convert_table_attributes(self, content):
-        """转换表格属性"""
         def convert_table(match):
             tag_content = match.group(0)
             attrs = self._parse_tag_attributes(tag_content)
@@ -152,7 +149,6 @@ class HTML5AttributeConverter:
         return content
     
     def convert_img_attributes(self, content):
-        """转换图片属性"""
         def convert_img(match):
             attrs = self._parse_tag_attributes(match.group(0))
             styles = []
@@ -177,7 +173,6 @@ class HTML5AttributeConverter:
         return content
     
     def convert_hr_attributes(self, content):
-        """转换水平线属性"""
         def convert_hr(match):
             attrs = self._parse_tag_attributes(match.group(0))
             styles = []
@@ -203,7 +198,6 @@ class HTML5AttributeConverter:
         return content
     
     def convert_generic_attributes(self, content):
-        """通用属性转换"""
         def convert_generic_tag(match):
             tag_name = match.group(1)
             attrs_str = match.group(2)
@@ -274,15 +268,31 @@ class HTML5AttributeConverter:
 
 
 class CompleteConverter:
-    """完整转换器"""
+    """完整转换器 - 统一变量名规范"""
     
     def __init__(self):
         self.html5_converter = HTML5AttributeConverter()
         self.conversion_count = 0
         self.error_count = 0
+        
+        # 统一变量名映射表（控件类型 -> 推荐变量名）
+        self.var_name_map = {
+            'repeater': 'dataList',
+            'datalist': 'dataList',
+            'gridview': 'dataTable',
+            'dropdownlist': 'selectOptions',
+            'checkboxlist': 'checkboxOptions',
+            'radiolist': 'radioOptions',
+            'bulletedlist': 'listItems',
+            'menu': 'menuItems',
+            'treeview': 'treeNodes',
+            'sitemappath': 'breadcrumbs',
+            'adrotator': 'adList',
+            'formview': 'formData',
+            'detailsview': 'detailData',
+        }
     
     def extract_attributes(self, tag_content):
-        """提取标签属性"""
         attributes = {}
         attr_pattern = r'(\w+)\s*=\s*["\']([^"\']*)["\']'
         for match in re.finditer(attr_pattern, tag_content):
@@ -293,13 +303,69 @@ class CompleteConverter:
         return attributes
     
     def convert_binding_expression(self, value):
-        """转换数据绑定表达式，添加默认值避免未定义错误"""
-        # 使用 Elvis 运算符 ?: 提供默认值
+        """转换数据绑定表达式，使用安全默认值"""
+        if not value:
+            return ''
+        # 使用 Elvis 运算符提供默认值
         value = re.sub(r'<%#\s*Eval\("([^"]+)"\)\s*%>', r'${item.\1 ?: ""}', value)
         value = re.sub(r'<%#\s*Bind\("([^"]+)"\)\s*%>', r'${item.\1 ?: ""}', value)
-        value = re.sub(r'<%=\s*([^%]+)\s*%>', r'${\1 ?: ""}', value)
-        value = re.sub(r'<%:\s*([^%]+)\s*%>', r'${\1 ?: ""}', value)
+        value = re.sub(r'<%=\s*([^%]+)\s*%>', r'${(\1) ?: ""}', value)
+        value = re.sub(r'<%:\s*([^%]+)\s*%>', r'${(\1) ?: ""}', value)
         return value
+    
+    def get_controller_example(self):
+        """生成 Controller 示例代码"""
+        return '''// ============================================================
+// Spring MVC Controller 变量设置示例
+// ============================================================
+@Controller
+public class YourController {
+    
+    @GetMapping("/your-page")
+    public String yourPage(Model model) {
+        // 1. 列表数据 (Repeater, DataList, GridView)
+        List<YourEntity> dataList = yourService.getList();
+        model.addAttribute("dataList", dataList);
+        
+        // 2. 下拉框选项 (DropDownList)
+        List<SelectOption> selectOptions = Arrays.asList(
+            new SelectOption("1", "选项1"),
+            new SelectOption("2", "选项2")
+        );
+        model.addAttribute("selectOptions", selectOptions);
+        
+        // 3. 复选框选项 (CheckBoxList)
+        model.addAttribute("checkboxOptions", selectOptions);
+        
+        // 4. 单选框选项 (RadioButtonList)
+        model.addAttribute("radioOptions", selectOptions);
+        
+        // 5. 菜单项 (Menu)
+        List<MenuItem> menuItems = getMenuItems();
+        model.addAttribute("menuItems", menuItems);
+        
+        // 6. 树形节点 (TreeView)
+        List<TreeNode> treeNodes = getTreeNodes();
+        model.addAttribute("treeNodes", treeNodes);
+        
+        // 7. 面包屑 (SiteMapPath)
+        List<Breadcrumb> breadcrumbs = getBreadcrumbs();
+        model.addAttribute("breadcrumbs", breadcrumbs);
+        
+        // 8. 广告列表 (AdRotator)
+        model.addAttribute("adList", adList);
+        
+        // 9. 表单数据 (FormView, DetailsView)
+        model.addAttribute("formData", formData);
+        
+        // 10. 表格数据 (GridView 列定义)
+        List<String> gridColumns = Arrays.asList("ID", "名称", "状态");
+        model.addAttribute("gridColumns", gridColumns);
+        
+        return "your-page";
+    }
+}
+'''
     
     # ==================== ASP 控件转换方法 ====================
     
@@ -317,12 +383,15 @@ class CompleteConverter:
         attrs = self.extract_attributes(tag)
         text_mode = attrs.get('textmode', '').lower()
         text = self.convert_binding_expression(attrs.get('text', ''))
+        css_class = attrs.get('class', '')
+        class_attr = f' class="{css_class}"' if css_class else ''
+        
         if text_mode == 'password':
-            return f'<input type="password" th:value="{text}" />'
+            return f'<input type="password" th:value="{text}"{class_attr} />'
         elif text_mode == 'multiline':
-            return f'<textarea th:text="{text}"></textarea>'
+            return f'<textarea th:text="{text}"{class_attr}></textarea>'
         else:
-            return f'<input type="text" th:value="{text}" />'
+            return f'<input type="text" th:value="{text}"{class_attr} />'
     
     def convert_button(self, match):
         tag = match.group(0)
@@ -359,7 +428,11 @@ class CompleteConverter:
     
     def convert_panel(self, match):
         content = match.group(1) if match.groups() else ''
-        return f'<div>{content}</div>'
+        tag = match.group(0)
+        attrs = self.extract_attributes(tag)
+        css_class = attrs.get('class', '')
+        class_attr = f' class="{css_class}"' if css_class else ''
+        return f'<div{class_attr}>{content}</div>'
     
     def convert_placeholder(self, match):
         content = match.group(1) if match.groups() else ''
@@ -375,68 +448,155 @@ class CompleteConverter:
         tag = match.group(0)
         attrs = self.extract_attributes(tag)
         text = self.convert_binding_expression(attrs.get('text', ''))
+        checked = attrs.get('checked', '').lower() == 'true'
+        checked_attr = ' checked' if checked else ''
+        
         if text:
-            return f'<label><input type="checkbox" /> <span th:text="{text}"></span></label>'
-        return '<input type="checkbox" />'
+            return f'<label><input type="checkbox"{checked_attr} /> <span th:text="{text}"></span></label>'
+        return f'<input type="checkbox"{checked_attr} />'
     
     def convert_checkboxlist(self, match):
-        # 使用注释提示需要传入数据
-        return '<!-- CheckBoxList: 需要在Controller中设置checkboxListData变量 -->\n<div th:if="${checkboxListData != null}" th:each="item : ${checkboxListData}"><label><input type="checkbox" th:value="${item.value}" /> <span th:text="${item.text}"></span></label></div>'
+        return '''<!-- CheckBoxList: 使用 checkboxOptions 变量 -->
+<div th:if="${checkboxOptions != null and !checkboxOptions.isEmpty()}">
+    <label th:each="opt : ${checkboxOptions}" class="checkbox-item">
+        <input type="checkbox" th:value="${opt.value}" th:text="${opt.label}" />
+        <span th:text="${opt.label}"></span>
+    </label>
+</div>
+<div th:unless="${checkboxOptions != null and !checkboxOptions.isEmpty()}">
+    <!-- 请在 Controller 中添加: model.addAttribute("checkboxOptions", checkboxList); -->
+</div>'''
     
     def convert_radiobutton(self, match):
         tag = match.group(0)
         attrs = self.extract_attributes(tag)
         text = self.convert_binding_expression(attrs.get('text', ''))
         group_name = attrs.get('groupname', 'radioGroup')
+        checked = attrs.get('checked', '').lower() == 'true'
+        checked_attr = ' checked' if checked else ''
+        
         if text:
-            return f'<label><input type="radio" name="{group_name}" /> <span th:text="{text}"></span></label>'
-        return f'<input type="radio" name="{group_name}" />'
+            return f'<label><input type="radio" name="{group_name}"{checked_attr} /> <span th:text="{text}"></span></label>'
+        return f'<input type="radio" name="{group_name}"{checked_attr} />'
     
     def convert_radiobuttonlist(self, match):
-        return '<!-- RadioButtonList: 需要在Controller中设置radioListData变量 -->\n<div th:if="${radioListData != null}" th:each="item : ${radioListData}"><label><input type="radio" name="radioGroup" th:value="${item.value}" /> <span th:text="${item.text}"></span></label></div>'
+        return '''<!-- RadioButtonList: 使用 radioOptions 变量 -->
+<div th:if="${radioOptions != null and !radioOptions.isEmpty()}">
+    <label th:each="opt : ${radioOptions}" class="radio-item">
+        <input type="radio" name="radioGroup" th:value="${opt.value}" />
+        <span th:text="${opt.label}"></span>
+    </label>
+</div>
+<div th:unless="${radioOptions != null and !radioOptions.isEmpty()}">
+    <!-- 请在 Controller 中添加: model.addAttribute("radioOptions", radioList); -->
+</div>'''
     
     def convert_dropdownlist(self, match):
         tag = match.group(0)
         attrs = self.extract_attributes(tag)
         css_class = attrs.get('class', '')
-        return f'<!-- DropDownList: 需要在Controller中设置dropDownListData变量 -->\n<select class="{css_class}" th:if="${{dropDownListData != null}}"><option th:each="item : ${dropDownListData}" th:value="${item.value}" th:text="${item.text}"></option></select>'
+        class_attr = f' class="{css_class}"' if css_class else ''
+        
+        return f'''<!-- DropDownList: 使用 selectOptions 变量 -->
+<select{class_attr} th:if="${{selectOptions != null and !selectOptions.isEmpty()}}">
+    <option value="">请选择</option>
+    <option th:each="opt : ${selectOptions}" th:value="${opt.value}" th:text="${opt.label}"></option>
+</select>
+<select class="disabled" disabled th:unless="${selectOptions != null and !selectOptions.isEmpty()}">
+    <option>无数据</option>
+</select>'''
     
     def convert_listbox(self, match):
-        return '<!-- ListBox: 需要在Controller中设置listBoxData变量 -->\n<select multiple th:if="${listBoxData != null}"><option th:each="item : ${listBoxData}" th:value="${item.value}" th:text="${item.text}"></option></select>'
+        tag = match.group(0)
+        attrs = self.extract_attributes(tag)
+        css_class = attrs.get('class', '')
+        class_attr = f' class="{css_class}"' if css_class else ''
+        
+        return f'''<!-- ListBox: 使用 selectOptions 变量 -->
+<select multiple{class_attr} th:if="${{selectOptions != null and !selectOptions.isEmpty()}}">
+    <option th:each="opt : ${selectOptions}" th:value="${opt.value}" th:text="${opt.label}"></option>
+</select>
+<select multiple disabled th:unless="${selectOptions != null and !selectOptions.isEmpty()}">
+    <option>无数据</option>
+</select>'''
     
     def convert_bulletedlist(self, match):
-        return '<!-- BulletedList: 需要在Controller中设置bulletedListData变量 -->\n<ul th:if="${bulletedListData != null}"><li th:each="item : ${bulletedListData}" th:text="${item.text}"></li></ul>'
+        tag = match.group(0)
+        attrs = self.extract_attributes(tag)
+        css_class = attrs.get('class', '')
+        class_attr = f' class="{css_class}"' if css_class else ''
+        
+        return f'''<!-- BulletedList: 使用 listItems 变量 -->
+<ul{class_attr} th:if="${{listItems != null and !listItems.isEmpty()}}">
+    <li th:each="item : ${listItems}" th:text="${item.label}"></li>
+</ul>
+<div th:unless="${listItems != null and !listItems.isEmpty()}">
+    <!-- 请在 Controller 中添加: model.addAttribute("listItems", itemList); -->
+</div>'''
     
     def convert_repeater(self, match):
         content = match.group(1) if match.groups() else ''
         item_template = re.search(r'<ItemTemplate>(.*?)</ItemTemplate>', content, re.DOTALL)
         item_content = item_template.group(1) if item_template else '<div th:text="${item}"></div>'
         item_content = self.convert_binding_expression(item_content)
-        return '<!-- Repeater: 需要在Controller中设置repeaterData变量 -->\n<div th:if="${repeaterData != null}" th:each="item : ${repeaterData}">' + item_content + '</div>'
+        
+        return f'''<!-- Repeater: 使用 dataList 变量 -->
+<div th:if="${{dataList != null and !dataList.isEmpty()}}" th:each="item : ${{dataList}}">
+    {item_content}
+</div>
+<div th:unless="${{dataList != null and !dataList.isEmpty()}}">
+    <p>暂无数据</p>
+</div>'''
     
     def convert_datalist(self, match):
-        return '<!-- DataList: 需要在Controller中设置dataListData变量 -->\n<div th:if="${dataListData != null}" th:each="item : ${dataListData}"><div th:text="${item}"></div></div>'
+        return '''<!-- DataList: 使用 dataList 变量 -->
+<div th:if="${dataList != null and !dataList.isEmpty()}" th:each="item : ${dataList}">
+    <div th:text="${item}"></div>
+</div>
+<div th:unless="${dataList != null and !dataList.isEmpty()}">
+    <p>暂无数据</p>
+</div>'''
     
     def convert_gridview(self, match):
-        return '''<!-- GridView: 需要在Controller中设置gridViewData和gridViewColumns变量 -->
-<table class="table" th:if="${gridViewData != null}">
+        return f'''<!-- GridView: 使用 dataTable 和 gridColumns 变量 -->
+<table class="table" th:if="${{dataTable != null and !dataTable.isEmpty()}}">
     <thead>
-        <tr><th th:each="col : ${gridViewColumns}" th:text="${col}"></th></tr>
+        <tr>
+            <th th:each="col : ${gridColumns}" th:text="${col}"></th>
+        </tr>
     </thead>
     <tbody>
-        <tr th:each="item : ${gridViewData}">
-            <td th:each="prop : ${item}" th:text="${prop}"></td>
+        <tr th:each="row : ${dataTable}">
+            <td th:each="cell : ${row}" th:text="${cell}"></td>
         </tr>
     </tbody>
-</table>'''
+</table>
+<div th:unless="${dataTable != null and !dataTable.isEmpty()}">
+    <p>暂无数据</p>
+</div>'''
     
     def convert_detailsview(self, match):
-        return '<!-- DetailsView: 需要在Controller中设置detailsViewData和detailsViewFields变量 -->\n<div th:if="${detailsViewData != null}" th:each="field : ${detailsViewFields}"><span th:text="${field.label}"></span>: <span th:text="${detailsViewData[field.name]}"></span></div>'
+        return '''<!-- DetailsView: 使用 detailData 变量 -->
+<div th:if="${detailData != null}" class="details-view">
+    <div th:each="field : ${detailData.keySet()}">
+        <span class="label" th:text="${field}"></span>:
+        <span class="value" th:text="${detailData[field]}"></span>
+    </div>
+</div>
+<div th:unless="${detailData != null}">
+    <p>暂无详情数据</p>
+</div>'''
     
     def convert_formview(self, match):
         content = match.group(1) if match.groups() else ''
         content = self.convert_binding_expression(content)
-        return f'<!-- FormView: 需要在Controller中设置formViewData变量 -->\n<div th:if="${{formViewData != null}}" th:object="${{formViewData}}">{content}</div>'
+        return f'''<!-- FormView: 使用 formData 变量 -->
+<form th:action="@{{/save}}" method="post" th:object="${{formData}}" th:if="${{formData != null}}">
+    {content}
+</form>
+<div th:unless="${{formData != null}}">
+    <p>表单数据未加载</p>
+</div>'''
     
     def convert_requiredvalidator(self, match):
         tag = match.group(0)
@@ -461,33 +621,79 @@ class CompleteConverter:
         return '<div class="validation-summary" th:if="${#fields.hasErrors()}"><ul><li th:each="err : ${#fields.allErrors()}" th:text="${err}"></li></ul></div>'
     
     def convert_menu(self, match):
-        return '<!-- Menu: 需要在Controller中设置menuItems变量 -->\n<ul class="menu" th:if="${menuItems != null}"><li th:each="item : ${menuItems}"><a th:href="${item.url}" th:text="${item.text}"></a></li></ul>'
+        return f'''<!-- Menu: 使用 menuItems 变量 -->
+<ul class="menu" th:if="${{menuItems != null and !menuItems.isEmpty()}}">
+    <li th:each="item : ${{menuItems}}">
+        <a th:href="${{item.url}}" th:text="${{item.label}}"></a>
+    </li>
+</ul>
+<div th:unless="${{menuItems != null and !menuItems.isEmpty()}}">
+    <!-- 请在 Controller 中添加: model.addAttribute("menuItems", menuList); -->
+</div>'''
     
     def convert_treeview(self, match):
-        return '<!-- TreeView: 需要在Controller中设置treeNodes变量 -->\n<ul class="treeview" th:if="${treeNodes != null}"><li th:each="node : ${treeNodes}"><span th:text="${node.text}"></span></li></ul>'
+        return f'''<!-- TreeView: 使用 treeNodes 变量 -->
+<ul class="treeview" th:if="${{treeNodes != null and !treeNodes.isEmpty()}}">
+    <li th:each="node : ${{treeNodes}}">
+        <span th:text="${{node.label}}"></span>
+        <ul th:if="${{node.children != null and !node.children.isEmpty()}}">
+            <li th:each="child : ${{node.children}}" th:text="${{child.label}}"></li>
+        </ul>
+    </li>
+</ul>
+<div th:unless="${{treeNodes != null and !treeNodes.isEmpty()}}">
+    <!-- 请在 Controller 中添加: model.addAttribute("treeNodes", treeData); -->
+</div>'''
     
     def convert_sitemappath(self, match):
-        return '<!-- SiteMapPath: 需要在Controller中设置breadcrumbs变量 -->\n<div class="breadcrumb" th:if="${breadcrumbs != null}"><span th:each="node : ${breadcrumbs}"><a th:href="${node.url}" th:text="${node.title}"></a> &gt; </span></div>'
+        return f'''<!-- SiteMapPath: 使用 breadcrumbs 变量 -->
+<div class="breadcrumb" th:if="${{breadcrumbs != null and !breadcrumbs.isEmpty()}}">
+    <span th:each="node,iterStat : ${{breadcrumbs}}">
+        <a th:if="${{!iterStat.last}}" th:href="${{node.url}}" th:text="${{node.label}}"></a>
+        <span th:unless="${{!iterStat.last}}" th:text="${{node.label}}"></span>
+        <span th:if="${{!iterStat.last}}"> &gt; </span>
+    </span>
+</div>
+<div th:unless="${{breadcrumbs != null and !breadcrumbs.isEmpty()}}">
+    <!-- 请在 Controller 中添加: model.addAttribute("breadcrumbs", breadcrumbList); -->
+</div>'''
     
     def convert_login(self, match):
-        return '''<form th:action="@{/login}" method="post">
-    <div><input type="text" name="username" placeholder="用户名" th:value="${username != null ? username : ''}" /></div>
-    <div><input type="password" name="password" placeholder="密码" /></div>
+        return '''<!-- Login 表单 -->
+<form th:action="@{/login}" method="post">
+    <div class="form-group">
+        <input type="text" name="username" placeholder="用户名" th:value="${username != null ? username : ''}" />
+    </div>
+    <div class="form-group">
+        <input type="password" name="password" placeholder="密码" />
+    </div>
     <div th:if="${error != null}" class="error" th:text="${error}"></div>
     <button type="submit">登录</button>
 </form>'''
     
     def convert_loginview(self, match):
-        return '<div sec:authorize="isAuthenticated()">已登录</div><div sec:authorize="isAnonymous()">未登录</div>'
+        return '''<div sec:authorize="isAuthenticated()">
+    <!-- 已登录用户看到的内容 -->
+</div>
+<div sec:authorize="isAnonymous()">
+    <!-- 未登录用户看到的内容 -->
+</div>'''
     
     def convert_loginstatus(self, match):
-        return '<a sec:authorize="isAnonymous()" th:href="@{/login}">登录</a><a sec:authorize="isAuthenticated()" th:href="@{/logout}">注销</a>'
+        return '''<div>
+    <a sec:authorize="isAnonymous()" th:href="@{/login}">登录</a>
+    <span sec:authorize="isAuthenticated()">
+        <span sec:authentication="name"></span>
+        <a th:href="@{/logout}">注销</a>
+    </span>
+</div>'''
     
     def convert_loginname(self, match):
         return '<span sec:authentication="name"></span>'
     
     def convert_createuserwizard(self, match):
-        return '''<form th:action="@{/register}" method="post">
+        return '''<!-- 注册表单 -->
+<form th:action="@{/register}" method="post">
     <div><input type="text" name="username" placeholder="用户名" th:value="${user != null ? user.username : ''}" /></div>
     <div><input type="password" name="password" placeholder="密码" /></div>
     <div><input type="password" name="confirmPassword" placeholder="确认密码" /></div>
@@ -496,7 +702,8 @@ class CompleteConverter:
 </form>'''
     
     def convert_changepassword(self, match):
-        return '''<form th:action="@{/change-password}" method="post">
+        return '''<!-- 修改密码表单 -->
+<form th:action="@{/change-password}" method="post">
     <div><input type="password" name="oldPassword" placeholder="当前密码" /></div>
     <div><input type="password" name="newPassword" placeholder="新密码" /></div>
     <div><input type="password" name="confirmPassword" placeholder="确认新密码" /></div>
@@ -505,7 +712,8 @@ class CompleteConverter:
 </form>'''
     
     def convert_passwordrecovery(self, match):
-        return '''<form th:action="@{/forgot-password}" method="post">
+        return '''<!-- 找回密码表单 -->
+<form th:action="@{/forgot-password}" method="post">
     <div><input type="text" name="username" placeholder="用户名/邮箱" /></div>
     <div th:if="${message != null}" class="success" th:text="${message}"></div>
     <div th:if="${error != null}" class="error" th:text="${error}"></div>
@@ -524,19 +732,25 @@ class CompleteConverter:
         return f'<div class="update-progress" style="display: none;">{content}</div>'
     
     def convert_timer(self, match):
-        return ''
+        return '<!-- Timer 控件需要 JavaScript 实现 -->'
     
     def convert_sqldatasource(self, match):
-        return '<!-- SqlDataSource 需在Spring Data JPA或MyBatis中实现 -->'
+        return '<!-- SqlDataSource 需在 Spring Data JPA 或 MyBatis 中实现 -->'
     
     def convert_objectdatasource(self, match):
-        return '<!-- ObjectDataSource 需在Spring Service层实现 -->'
+        return '<!-- ObjectDataSource 需在 Spring Service 层实现 -->'
     
     def convert_calendar(self, match):
-        return '<input type="date" />'
+        return '<input type="date" class="calendar" />'
     
     def convert_adrotator(self, match):
-        return '<!-- AdRotator: 需要在Controller中设置ads变量 -->\n<div class="ad-rotator" th:if="${ads != null}"><img th:each="ad : ${ads}" th:src="${ad.imageUrl}" th:alt="${ad.altText}" /></div>'
+        return f'''<!-- AdRotator: 使用 adList 变量 -->
+<div class="ad-rotator" th:if="${{adList != null and !adList.isEmpty()}}">
+    <img th:each="ad : ${{adList}}" th:src="${{ad.imageUrl}}" th:alt="${{ad.altText}}" />
+</div>
+<div th:unless="${{adList != null and !adList.isEmpty()}}">
+    <!-- 请在 Controller 中添加: model.addAttribute("adList", advertisementList); -->
+</div>'''
     
     def convert_fileupload(self, match):
         return '<input type="file" name="file" />'
@@ -548,14 +762,32 @@ class CompleteConverter:
         return f'<input type="hidden" th:value="{value}" />'
     
     def convert_multiview(self, match):
-        return '<div th:switch="${activeViewId}">\n    <!-- MultiView 内容 -->\n</div>'
+        return '<div th:switch="${activeViewId}">\n    <!-- MultiView 内容，请使用 th:case 为每个 View 定义 -->\n</div>'
     
     def convert_view(self, match):
         content = match.group(1) if match.groups() else ''
-        return f'<div th:case="viewId">{content}</div>'
+        tag = match.group(0)
+        attrs = self.extract_attributes(tag)
+        view_id = attrs.get('id', 'viewId')
+        return f'<div th:case="\'{view_id}\'">{content}</div>'
     
     def convert_wizard(self, match):
-        return '<!-- Wizard: 需要在Controller中设置wizardSteps和currentStep变量 -->\n<div class="wizard" th:if="${wizardSteps != null}"><div th:each="step,iterStat : ${wizardSteps}" th:if="${iterStat.index == currentStep}" th:text="${step}"></div></div>'
+        return '''<!-- Wizard: 使用 wizardSteps 和 currentStep 变量 -->
+<div class="wizard" th:if="${wizardSteps != null and !wizardSteps.isEmpty()}">
+    <div class="wizard-steps">
+        <span th:each="step,iterStat : ${wizardSteps}" 
+              th:classappend="${iterStat.index == currentStep} ? 'active' : ''"
+              th:text="${step.title}"></span>
+    </div>
+    <div class="wizard-content">
+        <div th:each="step,iterStat : ${wizardSteps}" 
+             th:if="${iterStat.index == currentStep}"
+             th:utext="${step.content}"></div>
+    </div>
+</div>
+<div th:unless="${wizardSteps != null and !wizardSteps.isEmpty()}">
+    <!-- 请在 Controller 中添加: model.addAttribute("wizardSteps", stepList); model.addAttribute("currentStep", 0); -->
+</div>'''
     
     def convert_wizardstep(self, match):
         content = match.group(1) if match.groups() else ''
@@ -627,8 +859,10 @@ class CompleteConverter:
             
             # 执行转换
             for tag_name, converter_func in asp_converters.items():
+                # 带内容的标签
                 pattern = re.compile(f'<{tag_name}[^>]*>(.*?)</{tag_name}>', re.IGNORECASE | re.DOTALL)
                 content = pattern.sub(converter_func, content)
+                # 自闭合标签
                 pattern_self = re.compile(f'<{tag_name}[^>]*/?>', re.IGNORECASE)
                 content = pattern_self.sub(converter_func, content)
             
@@ -646,25 +880,35 @@ class CompleteConverter:
             if '<html' in content and 'xmlns:th=' not in content:
                 content = re.sub(r'(<html\s*)', r'\1xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security" ', content)
             
-            # 添加数据绑定说明注释
-            content = '''<!-- 
-  转换说明：
-  ================================================================
-  以下 Thymeleaf 变量需要在 Controller 中定义：
-  
-  常用变量示例：
-  - ${item} 或 ${repeaterData}: 数据对象
-  - ${dropDownListData}: 下拉列表数据
-  - ${checkboxListData}: 复选框列表数据
-  - ${radioListData}: 单选按钮列表数据
-  - ${gridViewData}: 表格数据
-  - ${menuItems}: 菜单项数据
-  - ${treeNodes}: 树形节点数据
-  - ${breadcrumbs}: 面包屑数据
-  - ${ads}: 广告数据
-  
-  如果变量未定义，页面会显示空白，请确保在 Controller 中添加对应的 Model 属性。
-  ================================================================
+            # 添加完整的变量说明
+            content = f'''<!-- 
+================================================================
+ASPX to Thymeleaf 转换完成
+================================================================
+
+【Controller 变量说明】
+以下变量需要在 Spring MVC Controller 中设置：
+
+1. dataList / dataTable    - 列表/表格数据 (Repeater, DataList, GridView)
+2. selectOptions           - 下拉框选项 (DropDownList, ListBox)
+3. checkboxOptions         - 复选框选项 (CheckBoxList)
+4. radioOptions            - 单选框选项 (RadioButtonList)
+5. listItems               - 列表项 (BulletedList)
+6. menuItems               - 菜单项 (Menu)
+7. treeNodes               - 树形节点 (TreeView)
+8. breadcrumbs             - 面包屑 (SiteMapPath)
+9. adList                  - 广告列表 (AdRotator)
+10. formData               - 表单数据 (FormView)
+11. detailData             - 详情数据 (DetailsView)
+12. gridColumns            - 表格列定义 (GridView)
+13. wizardSteps            - 向导步骤 (Wizard)
+14. currentStep            - 当前步骤 (Wizard)
+15. activeViewId           - 当前视图ID (MultiView)
+
+【Controller 示例代码】
+{self.get_controller_example()}
+
+================================================================
 -->
 ''' + content
             
@@ -677,6 +921,7 @@ class CompleteConverter:
             report_path = output_path.with_suffix('.conversion_report.txt')
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write(self.html5_converter.get_conversion_report())
+                f.write("\n\n" + self.get_controller_example())
             
             self.conversion_count += 1
             print(f"  ✓ 已保存: {output_path}")
