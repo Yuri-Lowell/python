@@ -12,71 +12,6 @@ import re
 from pathlib import Path
 from collections import defaultdict
 
-class ASPXToThymeleafConverter:
-    """ASPX 到 Thymeleaf 转换器"""
-    
-    def __init__(self):
-        self.conversion_count = 0
-        self.error_count = 0
-        self.asp_tags_found = []
-        
-        # ASP 控件转换映射表
-        self.asp_converters = {
-            'asp:Label': self.convert_label,
-            'asp:TextBox': self.convert_textbox,
-            'asp:Button': self.convert_button,
-            'asp:LinkButton': self.convert_linkbutton,
-            'asp:ImageButton': self.convert_imagebutton,
-            'asp:HyperLink': self.convert_hyperlink,
-            'asp:Image': self.convert_image,
-            'asp:Panel': self.convert_panel,
-            'asp:PlaceHolder': self.convert_placeholder,
-            'asp:Literal': self.convert_literal,
-            'asp:CheckBox': self.convert_checkbox,
-            'asp:CheckBoxList': self.convert_checkboxlist,
-            'asp:RadioButton': self.convert_radiobutton,
-            'asp:RadioButtonList': self.convert_radiobuttonlist,
-            'asp:DropDownList': self.convert_dropdownlist,
-            'asp:ListBox': self.convert_listbox,
-            'asp:BulletedList': self.convert_bulletedlist,
-            'asp:Repeater': self.convert_repeater,
-            'asp:DataList': self.convert_datalist,
-            'asp:GridView': self.convert_gridview,
-            'asp:DetailsView': self.convert_detailsview,
-            'asp:FormView': self.convert_formview,
-            'asp:RequiredFieldValidator': self.convert_requiredvalidator,
-            'asp:RegularExpressionValidator': self.convert_regexvalidator,
-            'asp:CompareValidator': self.convert_comparevalidator,
-            'asp:RangeValidator': self.convert_rangevalidator,
-            'asp:CustomValidator': self.convert_customvalidator,
-            'asp:ValidationSummary': self.convert_validationsummary,
-            'asp:Menu': self.convert_menu,
-            'asp:TreeView': self.convert_treeview,
-            'asp:SiteMapPath': self.convert_sitemappath,
-            'asp:Login': self.convert_login,
-            'asp:LoginView': self.convert_loginview,
-            'asp:LoginStatus': self.convert_loginstatus,
-            'asp:LoginName': self.convert_loginname,
-            'asp:CreateUserWizard': self.convert_createuserwizard,
-            'asp:ChangePassword': self.convert_changepassword,
-            'asp:PasswordRecovery': self.convert_passwordrecovery,
-            'asp:ScriptManager': self.convert_scriptmanager,
-            'asp:UpdatePanel': self.convert_updatepanel,
-            'asp:UpdateProgress': self.convert_updateprogress,
-            'asp:Timer': self.convert_timer,
-            'asp:SqlDataSource': self.convert_sqldatasource,
-            'asp:ObjectDataSource': self.convert_objectdatasource,
-            'asp:Calendar': self.convert_calendar,
-            'asp:AdRotator': self.convert_adrotator,
-            'asp:FileUpload': self.convert_fileupload,
-            'asp:HiddenField': self.convert_hiddenfield,
-            'asp:MultiView': self.convert_multiview,
-            'asp:View': self.convert_view,
-            'asp:Wizard': self.convert_wizard,
-            'asp:WizardStep': self.convert_wizardstep,
-        }
-
-
 class HTML5AttributeConverter:
     """HTML5 属性转换器 - 将废弃属性转为 style"""
     
@@ -194,7 +129,7 @@ class HTML5AttributeConverter:
                     new_attributes[attr_name] = attr_value
             else:
                 # 保留 HTML5 支持的属性
-                if attr_lower not in ['runat', 'id'] or attr_lower == 'id':
+                if attr_lower not in ['runat']:
                     new_attributes[attr_name] = attr_value
         
         # 合并 style
@@ -259,12 +194,12 @@ class HTML5AttributeConverter:
     def convert_table_attributes(self, content):
         """转换表格属性"""
         
-        # 转换 <table> 标签
+        # 转换 </table> 标签
         def convert_table(match):
             tag_content = match.group(0)
             attrs = self._parse_tag_attributes(tag_content)
             
-            inner = re.search(r'<table[^>]*>(.*)<tr>', tag_content, re.DOTALL | re.IGNORECASE)
+            inner = re.search(r'<table[^>]*>(.*)</table>', tag_content, re.DOTALL | re.IGNORECASE)
             inner_content = inner.group(1) if inner else ''
             
             new_attrs = self.convert_attributes_to_style('table', attrs)
@@ -273,7 +208,7 @@ class HTML5AttributeConverter:
         
         content = re.sub(r'<table[^>]*>.*?</table>', convert_table, content, flags=re.DOTALL | re.IGNORECASE)
         
-        # 转换 <table> 和 <th> 标签
+        # 转换 53d 和 <th> 标签
         for cell_tag in ['td', 'th']:
             def convert_cell(match, tag=cell_tag):
                 attrs = self._parse_tag_attributes(match.group(0))
@@ -570,12 +505,68 @@ class HTML5AttributeConverter:
 
 
 class CompleteConverter:
-    """完整转换器"""
+    """完整转换器 - 整合所有功能"""
     
     def __init__(self):
         self.html5_converter = HTML5AttributeConverter()
         self.conversion_count = 0
         self.error_count = 0
+        
+        # ASP 控件转换映射表 - 定义在这里
+        self.asp_converters = {
+            'asp:Label': self.convert_label,
+            'asp:TextBox': self.convert_textbox,
+            'asp:Button': self.convert_button,
+            'asp:LinkButton': self.convert_linkbutton,
+            'asp:ImageButton': self.convert_imagebutton,
+            'asp:HyperLink': self.convert_hyperlink,
+            'asp:Image': self.convert_image,
+            'asp:Panel': self.convert_panel,
+            'asp:PlaceHolder': self.convert_placeholder,
+            'asp:Literal': self.convert_literal,
+            'asp:CheckBox': self.convert_checkbox,
+            'asp:CheckBoxList': self.convert_checkboxlist,
+            'asp:RadioButton': self.convert_radiobutton,
+            'asp:RadioButtonList': self.convert_radiobuttonlist,
+            'asp:DropDownList': self.convert_dropdownlist,
+            'asp:ListBox': self.convert_listbox,
+            'asp:BulletedList': self.convert_bulletedlist,
+            'asp:Repeater': self.convert_repeater,
+            'asp:DataList': self.convert_datalist,
+            'asp:GridView': self.convert_gridview,
+            'asp:DetailsView': self.convert_detailsview,
+            'asp:FormView': self.convert_formview,
+            'asp:RequiredFieldValidator': self.convert_requiredvalidator,
+            'asp:RegularExpressionValidator': self.convert_regexvalidator,
+            'asp:CompareValidator': self.convert_comparevalidator,
+            'asp:RangeValidator': self.convert_rangevalidator,
+            'asp:CustomValidator': self.convert_customvalidator,
+            'asp:ValidationSummary': self.convert_validationsummary,
+            'asp:Menu': self.convert_menu,
+            'asp:TreeView': self.convert_treeview,
+            'asp:SiteMapPath': self.convert_sitemappath,
+            'asp:Login': self.convert_login,
+            'asp:LoginView': self.convert_loginview,
+            'asp:LoginStatus': self.convert_loginstatus,
+            'asp:LoginName': self.convert_loginname,
+            'asp:CreateUserWizard': self.convert_createuserwizard,
+            'asp:ChangePassword': self.convert_changepassword,
+            'asp:PasswordRecovery': self.convert_passwordrecovery,
+            'asp:ScriptManager': self.convert_scriptmanager,
+            'asp:UpdatePanel': self.convert_updatepanel,
+            'asp:UpdateProgress': self.convert_updateprogress,
+            'asp:Timer': self.convert_timer,
+            'asp:SqlDataSource': self.convert_sqldatasource,
+            'asp:ObjectDataSource': self.convert_objectdatasource,
+            'asp:Calendar': self.convert_calendar,
+            'asp:AdRotator': self.convert_adrotator,
+            'asp:FileUpload': self.convert_fileupload,
+            'asp:HiddenField': self.convert_hiddenfield,
+            'asp:MultiView': self.convert_multiview,
+            'asp:View': self.convert_view,
+            'asp:Wizard': self.convert_wizard,
+            'asp:WizardStep': self.convert_wizardstep,
+        }
     
     def extract_attributes(self, tag_content):
         """提取标签属性"""
@@ -670,12 +661,13 @@ class CompleteConverter:
     
     def convert_panel(self, match):
         """转换 Panel 控件"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        # 获取标签内的内容
+        content = match.group(1) if match.groups() else ''
         return f'<div>{content}</div>'
     
     def convert_placeholder(self, match):
         """转换 PlaceHolder 控件"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         return content
     
     def convert_literal(self, match):
@@ -731,7 +723,7 @@ class CompleteConverter:
     
     def convert_repeater(self, match):
         """转换 Repeater 控件"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         
         item_template = re.search(r'<ItemTemplate>(.*?)</ItemTemplate>', content, re.DOTALL)
         item_content = item_template.group(1) if item_template else '<div th:text="${item}"></div>'
@@ -762,7 +754,7 @@ class CompleteConverter:
     
     def convert_formview(self, match):
         """转换 FormView 控件"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         content = self.convert_binding_expression(content)
         return f'<div th:object="${item}">{content}</div>'
     
@@ -851,12 +843,12 @@ class CompleteConverter:
     
     def convert_updatepanel(self, match):
         """转换 UpdatePanel"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         return f'<div class="update-panel">{content}</div>'
     
     def convert_updateprogress(self, match):
         """转换 UpdateProgress"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         return f'<div class="update-progress" style="display: none;">{content}</div>'
     
     def convert_timer(self, match):
@@ -897,7 +889,7 @@ class CompleteConverter:
     
     def convert_view(self, match):
         """转换 View"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         return f'<div th:case="viewId">{content}</div>'
     
     def convert_wizard(self, match):
@@ -906,7 +898,7 @@ class CompleteConverter:
     
     def convert_wizardstep(self, match):
         """转换 WizardStep"""
-        content = match.group(1) if len(match.groups()) > 0 else ''
+        content = match.group(1) if match.groups() else ''
         return f'<div class="wizard-step">{content}</div>'
     
     def process_file(self, file_path, output_path):
@@ -917,12 +909,13 @@ class CompleteConverter:
             
             print(f"处理: {file_path.name}")
             
-            # 1. 转换 ASPX 控件
+            # 1. 转换 ASPX 控件（带内容的自闭合标签）
             for tag_name, converter in self.asp_converters.items():
+                # 匹配带内容的标签 <asp:xxx>...</asp:xxx>
                 pattern = re.compile(f'<{tag_name}[^>]*>(.*?)</{tag_name}>', re.IGNORECASE | re.DOTALL)
                 content = pattern.sub(converter, content)
                 
-                # 自闭合标签
+                # 匹配自闭合标签 <asp:xxx /> 或 <asp:xxx>
                 pattern_self = re.compile(f'<{tag_name}[^>]*/?>', re.IGNORECASE)
                 content = pattern_self.sub(converter, content)
             
@@ -1005,7 +998,7 @@ class CompleteConverter:
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='ASPX to Thymeleaf 转换器（不含 jQuery 升级）')
+    parser = argparse.ArgumentParser(description='ASPX to Thymeleaf 转换器')
     parser.add_argument('input', help='输入目录路径')
     parser.add_argument('-o', '--output', help='输出目录路径', default='./thymeleaf_output')
     
