@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ASPX to Thymeleaf 转换器 - 最终完整版
-所有变量名统一规范，使用安全默认值避免未定义错误
+ASPX to Thymeleaf 转换器 - 完整修正版
+修正所有语法错误，特别是正则表达式中的花括号转义
 """
 
 import re
@@ -28,7 +28,7 @@ class HTML5AttributeConverter:
             'bottom': 'vertical-align: bottom;',
         },
         'bgcolor': 'background-color: {value};',
-        'background': 'background-image: url({value});',
+        'background': 'background-image: url("{value}");',
         'width': 'width: {value}px;',
         'height': 'height: {value}px;',
         'cellspacing': 'border-spacing: {value}px;',
@@ -65,6 +65,7 @@ class HTML5AttributeConverter:
         self.conversion_log = []
     
     def convert_attributes_to_style(self, tag_name, attributes):
+        """将废弃属性转换为 style 属性"""
         styles = []
         new_attributes = {}
         
@@ -100,6 +101,7 @@ class HTML5AttributeConverter:
         return new_attributes
     
     def convert_inline_tags(self, content):
+        """转换内联样式标签"""
         def convert_font(match):
             attrs = self._parse_attributes(match.group(1))
             styles = []
@@ -125,10 +127,11 @@ class HTML5AttributeConverter:
         return content
     
     def convert_table_attributes(self, content):
+        """转换表格属性"""
         def convert_table(match):
             tag_content = match.group(0)
             attrs = self._parse_tag_attributes(tag_content)
-            inner = re.search(r'<table[^>]*>(.*)</table>', tag_content, re.DOTALL | re.IGNORECASE)
+            inner = re.search(r'<table[^>]*>(.*)<table>', tag_content, re.DOTALL | re.IGNORECASE)
             inner_content = inner.group(1) if inner else ''
             new_attrs = self.convert_attributes_to_style('table', attrs)
             attr_str = self._build_attributes(new_attrs)
@@ -149,6 +152,7 @@ class HTML5AttributeConverter:
         return content
     
     def convert_img_attributes(self, content):
+        """转换图片属性"""
         def convert_img(match):
             attrs = self._parse_tag_attributes(match.group(0))
             styles = []
@@ -159,7 +163,9 @@ class HTML5AttributeConverter:
             if 'vspace' in attrs:
                 styles.append(f'margin-top: {attrs["vspace"]}px; margin-bottom: {attrs["vspace"]}px;')
             if 'align' in attrs:
-                align_map = {'left': 'float: left;', 'right': 'float: right;', 'top': 'vertical-align: top;', 'middle': 'vertical-align: middle;', 'bottom': 'vertical-align: bottom;'}
+                align_map = {'left': 'float: left;', 'right': 'float: right;', 
+                            'top': 'vertical-align: top;', 'middle': 'vertical-align: middle;', 
+                            'bottom': 'vertical-align: bottom;'}
                 if attrs['align'] in align_map:
                     styles.append(align_map[attrs['align']])
             
@@ -173,6 +179,7 @@ class HTML5AttributeConverter:
         return content
     
     def convert_hr_attributes(self, content):
+        """转换水平线属性"""
         def convert_hr(match):
             attrs = self._parse_tag_attributes(match.group(0))
             styles = []
@@ -180,13 +187,20 @@ class HTML5AttributeConverter:
                 styles.append(f'height: {attrs["size"]}px;')
             if 'width' in attrs:
                 width = attrs['width']
-                styles.append(f'width: {width if width.endswith("%") else width + "px"};')
+                if width.endswith('%'):
+                    styles.append(f'width: {width};')
+                else:
+                    styles.append(f'width: {width}px;')
             if 'color' in attrs:
                 styles.append(f'background-color: {attrs["color"]};')
             if 'noshade' in attrs:
                 styles.append('border: none;')
             if 'align' in attrs:
-                align_styles = {'left': 'margin-left: 0; margin-right: auto;', 'center': 'margin-left: auto; margin-right: auto;', 'right': 'margin-left: auto; margin-right: 0;'}
+                align_styles = {
+                    'left': 'margin-left: 0; margin-right: auto;',
+                    'center': 'margin-left: auto; margin-right: auto;',
+                    'right': 'margin-left: auto; margin-right: 0;'
+                }
                 if attrs['align'] in align_styles:
                     styles.append(align_styles[attrs['align']])
             
@@ -198,6 +212,7 @@ class HTML5AttributeConverter:
         return content
     
     def convert_generic_attributes(self, content):
+        """通用属性转换"""
         def convert_generic_tag(match):
             tag_name = match.group(1)
             attrs_str = match.group(2)
@@ -216,6 +231,7 @@ class HTML5AttributeConverter:
         return content
     
     def convert_all(self, content):
+        """执行所有转换"""
         content = self.convert_inline_tags(content)
         content = self.convert_table_attributes(content)
         content = self.convert_img_attributes(content)
@@ -224,6 +240,7 @@ class HTML5AttributeConverter:
         return content
     
     def _parse_attributes(self, attr_str):
+        """解析属性字符串"""
         attrs = {}
         pattern = r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))'
         for match in re.finditer(pattern, attr_str):
@@ -233,12 +250,14 @@ class HTML5AttributeConverter:
         return attrs
     
     def _parse_tag_attributes(self, tag_str):
+        """解析标签中的属性"""
         attr_match = re.search(r'<[^>\s]+\s+([^>]*)>', tag_str)
         if attr_match:
             return self._parse_attributes(attr_match.group(1))
         return {}
     
     def _build_attributes(self, attrs):
+        """构建属性字符串"""
         if not attrs:
             return ''
         attr_parts = []
@@ -251,9 +270,16 @@ class HTML5AttributeConverter:
         return ' ' + ' '.join(attr_parts) if attr_parts else ''
     
     def _log_conversion(self, tag, attr, value, css):
-        self.conversion_log.append({'tag': tag, 'attribute': attr, 'value': value, 'converted_to': css})
+        """记录转换日志"""
+        self.conversion_log.append({
+            'tag': tag,
+            'attribute': attr,
+            'value': value,
+            'converted_to': css
+        })
     
     def get_conversion_report(self):
+        """获取转换报告"""
         if not self.conversion_log:
             return "未发现需要转换的 HTML5 废弃属性"
         report = ["\n=== HTML5 属性转换报告 ===\n", f"共转换 {len(self.conversion_log)} 个废弃属性\n"]
@@ -268,31 +294,15 @@ class HTML5AttributeConverter:
 
 
 class CompleteConverter:
-    """完整转换器 - 统一变量名规范"""
+    """完整转换器"""
     
     def __init__(self):
         self.html5_converter = HTML5AttributeConverter()
         self.conversion_count = 0
         self.error_count = 0
-        
-        # 统一变量名映射表（控件类型 -> 推荐变量名）
-        self.var_name_map = {
-            'repeater': 'dataList',
-            'datalist': 'dataList',
-            'gridview': 'dataTable',
-            'dropdownlist': 'selectOptions',
-            'checkboxlist': 'checkboxOptions',
-            'radiolist': 'radioOptions',
-            'bulletedlist': 'listItems',
-            'menu': 'menuItems',
-            'treeview': 'treeNodes',
-            'sitemappath': 'breadcrumbs',
-            'adrotator': 'adList',
-            'formview': 'formData',
-            'detailsview': 'detailData',
-        }
     
     def extract_attributes(self, tag_content):
+        """提取标签属性"""
         attributes = {}
         attr_pattern = r'(\w+)\s*=\s*["\']([^"\']*)["\']'
         for match in re.finditer(attr_pattern, tag_content):
@@ -303,14 +313,13 @@ class CompleteConverter:
         return attributes
     
     def convert_binding_expression(self, value):
-        """转换数据绑定表达式，使用安全默认值"""
+        """转换数据绑定表达式"""
         if not value:
             return ''
-        # 使用 Elvis 运算符提供默认值
         value = re.sub(r'<%#\s*Eval\("([^"]+)"\)\s*%>', r'${item.\1 ?: ""}', value)
         value = re.sub(r'<%#\s*Bind\("([^"]+)"\)\s*%>', r'${item.\1 ?: ""}', value)
-        value = re.sub(r'<%=\s*([^%]+)\s*%>', r'${(\1) ?: ""}', value)
-        value = re.sub(r'<%:\s*([^%]+)\s*%>', r'${(\1) ?: ""}', value)
+        value = re.sub(r'<%=\s*([^%]+)\s*%>', r'${\1 ?: ""}', value)
+        value = re.sub(r'<%:\s*([^%]+)\s*%>', r'${\1 ?: ""}', value)
         return value
     
     def get_controller_example(self):
@@ -459,7 +468,7 @@ public class YourController {
         return '''<!-- CheckBoxList: 使用 checkboxOptions 变量 -->
 <div th:if="${checkboxOptions != null and !checkboxOptions.isEmpty()}">
     <label th:each="opt : ${checkboxOptions}" class="checkbox-item">
-        <input type="checkbox" th:value="${opt.value}" th:text="${opt.label}" />
+        <input type="checkbox" th:value="${opt.value}" />
         <span th:text="${opt.label}"></span>
     </label>
 </div>
@@ -500,9 +509,9 @@ public class YourController {
         return f'''<!-- DropDownList: 使用 selectOptions 变量 -->
 <select{class_attr} th:if="${{selectOptions != null and !selectOptions.isEmpty()}}">
     <option value="">请选择</option>
-    <option th:each="opt : ${selectOptions}" th:value="${opt.value}" th:text="${opt.label}"></option>
+    <option th:each="opt : ${{selectOptions}}" th:value="${{opt.value}}" th:text="${{opt.label}}"></option>
 </select>
-<select class="disabled" disabled th:unless="${selectOptions != null and !selectOptions.isEmpty()}">
+<select class="disabled" disabled th:unless="${{selectOptions != null and !selectOptions.isEmpty()}}">
     <option>无数据</option>
 </select>'''
     
@@ -514,9 +523,9 @@ public class YourController {
         
         return f'''<!-- ListBox: 使用 selectOptions 变量 -->
 <select multiple{class_attr} th:if="${{selectOptions != null and !selectOptions.isEmpty()}}">
-    <option th:each="opt : ${selectOptions}" th:value="${opt.value}" th:text="${opt.label}"></option>
+    <option th:each="opt : ${{selectOptions}}" th:value="${{opt.value}}" th:text="${{opt.label}}"></option>
 </select>
-<select multiple disabled th:unless="${selectOptions != null and !selectOptions.isEmpty()}">
+<select multiple disabled th:unless="${{selectOptions != null and !selectOptions.isEmpty()}}">
     <option>无数据</option>
 </select>'''
     
@@ -528,9 +537,9 @@ public class YourController {
         
         return f'''<!-- BulletedList: 使用 listItems 变量 -->
 <ul{class_attr} th:if="${{listItems != null and !listItems.isEmpty()}}">
-    <li th:each="item : ${listItems}" th:text="${item.label}"></li>
+    <li th:each="item : ${{listItems}}" th:text="${{item.label}}"></li>
 </ul>
-<div th:unless="${listItems != null and !listItems.isEmpty()}">
+<div th:unless="${{listItems != null and !listItems.isEmpty()}}">
     <!-- 请在 Controller 中添加: model.addAttribute("listItems", itemList); -->
 </div>'''
     
@@ -558,8 +567,8 @@ public class YourController {
 </div>'''
     
     def convert_gridview(self, match):
-        return f'''<!-- GridView: 使用 dataTable 和 gridColumns 变量 -->
-<table class="table" th:if="${{dataTable != null and !dataTable.isEmpty()}}">
+        return '''<!-- GridView: 使用 dataTable 和 gridColumns 变量 -->
+<table class="table" th:if="${dataTable != null and !dataTable.isEmpty()}">
     <thead>
         <tr>
             <th th:each="col : ${gridColumns}" th:text="${col}"></th>
@@ -621,40 +630,40 @@ public class YourController {
         return '<div class="validation-summary" th:if="${#fields.hasErrors()}"><ul><li th:each="err : ${#fields.allErrors()}" th:text="${err}"></li></ul></div>'
     
     def convert_menu(self, match):
-        return f'''<!-- Menu: 使用 menuItems 变量 -->
-<ul class="menu" th:if="${{menuItems != null and !menuItems.isEmpty()}}">
-    <li th:each="item : ${{menuItems}}">
-        <a th:href="${{item.url}}" th:text="${{item.label}}"></a>
+        return '''<!-- Menu: 使用 menuItems 变量 -->
+<ul class="menu" th:if="${menuItems != null and !menuItems.isEmpty()}">
+    <li th:each="item : ${menuItems}">
+        <a th:href="${item.url}" th:text="${item.label}"></a>
     </li>
 </ul>
-<div th:unless="${{menuItems != null and !menuItems.isEmpty()}}">
+<div th:unless="${menuItems != null and !menuItems.isEmpty()}">
     <!-- 请在 Controller 中添加: model.addAttribute("menuItems", menuList); -->
 </div>'''
     
     def convert_treeview(self, match):
-        return f'''<!-- TreeView: 使用 treeNodes 变量 -->
-<ul class="treeview" th:if="${{treeNodes != null and !treeNodes.isEmpty()}}">
-    <li th:each="node : ${{treeNodes}}">
-        <span th:text="${{node.label}}"></span>
-        <ul th:if="${{node.children != null and !node.children.isEmpty()}}">
-            <li th:each="child : ${{node.children}}" th:text="${{child.label}}"></li>
+        return '''<!-- TreeView: 使用 treeNodes 变量 -->
+<ul class="treeview" th:if="${treeNodes != null and !treeNodes.isEmpty()}">
+    <li th:each="node : ${treeNodes}">
+        <span th:text="${node.label}"></span>
+        <ul th:if="${node.children != null and !node.children.isEmpty()}">
+            <li th:each="child : ${node.children}" th:text="${child.label}"></li>
         </ul>
     </li>
 </ul>
-<div th:unless="${{treeNodes != null and !treeNodes.isEmpty()}}">
+<div th:unless="${treeNodes != null and !treeNodes.isEmpty()}">
     <!-- 请在 Controller 中添加: model.addAttribute("treeNodes", treeData); -->
 </div>'''
     
     def convert_sitemappath(self, match):
-        return f'''<!-- SiteMapPath: 使用 breadcrumbs 变量 -->
-<div class="breadcrumb" th:if="${{breadcrumbs != null and !breadcrumbs.isEmpty()}}">
-    <span th:each="node,iterStat : ${{breadcrumbs}}">
-        <a th:if="${{!iterStat.last}}" th:href="${{node.url}}" th:text="${{node.label}}"></a>
-        <span th:unless="${{!iterStat.last}}" th:text="${{node.label}}"></span>
-        <span th:if="${{!iterStat.last}}"> &gt; </span>
+        return '''<!-- SiteMapPath: 使用 breadcrumbs 变量 -->
+<div class="breadcrumb" th:if="${breadcrumbs != null and !breadcrumbs.isEmpty()}">
+    <span th:each="node,iterStat : ${breadcrumbs}">
+        <a th:if="${!iterStat.last}" th:href="${node.url}" th:text="${node.label}"></a>
+        <span th:unless="${!iterStat.last}" th:text="${node.label}"></span>
+        <span th:if="${!iterStat.last}"> &gt; </span>
     </span>
 </div>
-<div th:unless="${{breadcrumbs != null and !breadcrumbs.isEmpty()}}">
+<div th:unless="${breadcrumbs != null and !breadcrumbs.isEmpty()}">
     <!-- 请在 Controller 中添加: model.addAttribute("breadcrumbs", breadcrumbList); -->
 </div>'''
     
@@ -744,11 +753,11 @@ public class YourController {
         return '<input type="date" class="calendar" />'
     
     def convert_adrotator(self, match):
-        return f'''<!-- AdRotator: 使用 adList 变量 -->
-<div class="ad-rotator" th:if="${{adList != null and !adList.isEmpty()}}">
-    <img th:each="ad : ${{adList}}" th:src="${{ad.imageUrl}}" th:alt="${{ad.altText}}" />
+        return '''<!-- AdRotator: 使用 adList 变量 -->
+<div class="ad-rotator" th:if="${adList != null and !adList.isEmpty()}">
+    <img th:each="ad : ${adList}" th:src="${ad.imageUrl}" th:alt="${ad.altText}" />
 </div>
-<div th:unless="${{adList != null and !adList.isEmpty()}}">
+<div th:unless="${adList != null and !adList.isEmpty()}">
     <!-- 请在 Controller 中添加: model.addAttribute("adList", advertisementList); -->
 </div>'''
     
@@ -880,7 +889,7 @@ public class YourController {
             if '<html' in content and 'xmlns:th=' not in content:
                 content = re.sub(r'(<html\s*)', r'\1xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security" ', content)
             
-            # 添加完整的变量说明
+            # 添加变量说明
             content = f'''<!-- 
 ================================================================
 ASPX to Thymeleaf 转换完成
@@ -904,9 +913,6 @@ ASPX to Thymeleaf 转换完成
 13. wizardSteps            - 向导步骤 (Wizard)
 14. currentStep            - 当前步骤 (Wizard)
 15. activeViewId           - 当前视图ID (MultiView)
-
-【Controller 示例代码】
-{self.get_controller_example()}
 
 ================================================================
 -->
